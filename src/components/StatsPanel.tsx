@@ -7,7 +7,7 @@ import {
   weeklyAverageLoss,
   type DatedWeight,
 } from '@/lib/stats';
-import { bmi, bmiCategory, formatWeight } from '@/lib/units';
+import { bmi, bmiCategory, formatWeight, weightLbForBmi } from '@/lib/units';
 
 export interface StatsPanelProps {
   profile: Profile;
@@ -88,10 +88,27 @@ export default function StatsPanel({
         })
       : null;
 
+  // BMI=25 (top of healthy range) projected reach date.
+  const healthyBmiCutoffLb =
+    profile.heightIn !== null ? weightLbForBmi(25, profile.heightIn) : null;
+  const bmiProjection =
+    healthyBmiCutoffLb !== null && filtered.length > 0
+      ? projectWeight({
+          maSeries: ma,
+          today:
+            ma.length > 0 ? ma[ma.length - 1].date : entries[0]?.date ?? '',
+          targetWeightMaxLb: healthyBmiCutoffLb,
+        })
+      : null;
+
   const bmiVal =
     current !== null && profile.heightIn !== null
       ? bmi(current, profile.heightIn)
       : null;
+  const alreadyHealthyBmi =
+    current !== null &&
+    healthyBmiCutoffLb !== null &&
+    current <= healthyBmiCutoffLb;
 
   return (
     <section
@@ -149,7 +166,7 @@ export default function StatsPanel({
         <Sub>Last 4 wks of MA</Sub>
       </Card>
 
-      <Card label="Projected target">
+      <Card label="Projected">
         <Big
           value={
             projection?.targetReached
@@ -159,9 +176,20 @@ export default function StatsPanel({
         />
         <Sub>
           {projection
-            ? `${projection.slopeLbPerWeek.toFixed(2)} lb/wk · r²=${projection.r2.toFixed(2)}`
-            : '<7d of data'}
+            ? `Target · ${projection.slopeLbPerWeek.toFixed(2)} lb/wk · r²=${projection.r2.toFixed(2)}`
+            : profile.targetWeightMaxLb == null
+              ? 'Set a target weight'
+              : '<7d of data'}
         </Sub>
+        <p className="mt-1 text-xs text-slate-500">
+          {alreadyHealthyBmi
+            ? 'Healthy BMI · already there ✓'
+            : bmiProjection?.targetReached
+              ? `Healthy BMI · ${formatDateLong(bmiProjection.targetReached)}`
+              : profile.heightIn === null
+                ? 'Healthy BMI · set height'
+                : 'Healthy BMI · <7d data'}
+        </p>
       </Card>
 
       <Card label="BMI">

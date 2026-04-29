@@ -4,7 +4,9 @@ import {
   bmiCategory,
   formatHeight,
   formatWeight,
+  healthyWeightRangeLb,
   parseHeight,
+  weightLbForBmi,
 } from './units';
 
 describe('bmi', () => {
@@ -87,5 +89,35 @@ describe('parseHeight', () => {
     expect(parseHeight('tall')).toBeNull();
     expect(parseHeight('5 99')).toBeNull(); // inches >= 12
     expect(parseHeight('-5')).toBeNull();
+  });
+});
+
+describe('weightLbForBmi', () => {
+  it('inverts bmi() exactly', () => {
+    // 70 in: BMI 25 → (25 * 4900) / 703 ≈ 174.25
+    expect(weightLbForBmi(25, 70)).toBeCloseTo(174.25, 2);
+    // Round-trip: bmi(weightLbForBmi(b, h), h) === b
+    expect(bmi(weightLbForBmi(22, 65), 65)).toBeCloseTo(22, 6);
+  });
+
+  it('returns NaN for invalid inputs', () => {
+    expect(weightLbForBmi(25, 0)).toBeNaN();
+    expect(weightLbForBmi(NaN, 70)).toBeNaN();
+  });
+});
+
+describe('healthyWeightRangeLb', () => {
+  it('returns the BMI 18.5–25 weight range at a given height', () => {
+    const r = healthyWeightRangeLb(70);
+    expect(r).not.toBeNull();
+    expect(r!.minLb).toBeCloseTo(weightLbForBmi(18.5, 70), 6);
+    expect(r!.maxLb).toBeCloseTo(weightLbForBmi(25, 70), 6);
+    expect(r!.minLb).toBeLessThan(r!.maxLb);
+  });
+
+  it('returns null for missing/invalid height', () => {
+    expect(healthyWeightRangeLb(null)).toBeNull();
+    expect(healthyWeightRangeLb(undefined)).toBeNull();
+    expect(healthyWeightRangeLb(0)).toBeNull();
   });
 });

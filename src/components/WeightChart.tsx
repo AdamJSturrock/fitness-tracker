@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ComposedChart,
   Legend,
@@ -14,7 +14,7 @@ import {
   YAxis,
 } from 'recharts';
 import { formatShortDate } from '@/lib/dateUtils';
-import { formatWeight } from '@/lib/units';
+import { formatWeight, weightLbForBmi } from '@/lib/units';
 
 export interface WeightChartProps {
   rawWeights: { date: string; weightLb: number }[];
@@ -23,7 +23,32 @@ export interface WeightChartProps {
   projection: { date: string; weightLb: number }[] | null;
   targetMinLb: number | null;
   targetMaxLb: number | null;
+  heightIn: number | null;
   todayIso: string;
+}
+
+interface BmiBand {
+  y1: number;
+  y2: number;
+  fill: string;
+}
+
+function bmiBandsForHeight(
+  heightIn: number,
+  yDomain: [number, number],
+): BmiBand[] {
+  const [yMin, yMax] = yDomain;
+  const t18 = weightLbForBmi(18.5, heightIn);
+  const t25 = weightLbForBmi(25, heightIn);
+  const t30 = weightLbForBmi(30, heightIn);
+  const clamp = (v: number) => Math.max(yMin, Math.min(yMax, v));
+  const raw: BmiBand[] = [
+    { y1: yMin, y2: clamp(t18), fill: '#0ea5e9' }, // underweight (sky)
+    { y1: clamp(t18), y2: clamp(t25), fill: '#10b981' }, // healthy (emerald)
+    { y1: clamp(t25), y2: clamp(t30), fill: '#f59e0b' }, // overweight (amber)
+    { y1: clamp(t30), y2: yMax, fill: '#e11d48' }, // obese (rose)
+  ];
+  return raw.filter((b) => b.y2 > b.y1 + 0.001);
 }
 
 interface ChartRow {
@@ -131,11 +156,17 @@ function ChartTooltip({
 }
 
 export default function WeightChart(props: WeightChartProps) {
+  const [showBmi, setShowBmi] = useState(false);
   const data = useMemo(() => buildChartData(props), [props]);
   const yDomain = useMemo(
     () => computeYDomain(data, props.targetMinLb, props.targetMaxLb),
     [data, props.targetMinLb, props.targetMaxLb],
   );
+  const bmiBands = useMemo(() => {
+    if (!showBmi || !props.heightIn || !yDomain) return null;
+    return bmiBandsForHeight(props.heightIn, yDomain);
+  }, [showBmi, props.heightIn, yDomain]);
+  const canShowBmi = props.heightIn !== null && props.heightIn > 0;
 
   if (props.movingAvg.length === 0) {
     return (
@@ -164,12 +195,45 @@ export default function WeightChart(props: WeightChartProps) {
       aria-label="Weight chart"
       className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4"
     >
+      <div className="mb-2 flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => setShowBmi((v) => !v)}
+          disabled={!canShowBmi}
+          aria-pressed={showBmi}
+          title={
+            canShowBmi
+              ? 'Toggle BMI category bands'
+              : 'Set your height on the Profile tab to enable BMI bands'
+          }
+          className={
+            'inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium transition ' +
+            (showBmi
+              ? 'border-emerald-600 bg-emerald-50 text-emerald-700'
+              : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50') +
+            ' disabled:cursor-not-allowed disabled:opacity-50'
+          }
+        >
+          {showBmi ? 'BMI bands on' : 'Show BMI bands'}
+        </button>
+      </div>
       <div className="h-72 w-full md:h-96">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={data}
             margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
           >
+            {bmiBands?.map((b, i) => (
+              <ReferenceArea
+                key={`bmi-${i}`}
+                y1={b.y1}
+                y2={b.y2}
+                fill={b.fill}
+                fillOpacity={0.1}
+                stroke="none"
+                ifOverflow="hidden"
+              />
+            ))}
             <XAxis
               dataKey="date"
               type="category"
@@ -257,6 +321,27 @@ export default function WeightChart(props: WeightChartProps) {
           </ComposedChart>
         </ResponsiveContainer>
       </div>
+      {showBmi && canShowBmi ? (
+        <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600">
+          <BmiKey color="#0ea5e9" label="Underweight (BMI < 18.5)" />
+          <BmiKey color="#10b981" label="Healthy (18.5–25)" />
+          <BmiKey color="#f59e0b" label="Overweight (25–30)" />
+          <BmiKey color="#e11d48" label="Obese (≥ 30)" />
+        </ul>
+      ) : null}
     </section>
+  );
+}
+
+function BmiKey({ color, label }: { color: string; label: string }) {
+  return (
+    <li className="flex items-center gap-1.5">
+      <span
+        aria-hidden
+        className="inline-block h-2.5 w-3 rounded-sm"
+        style={{ background: color, opacity: 0.5 }}
+      />
+      <span>{label}</span>
+    </li>
   );
 }

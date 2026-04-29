@@ -24,6 +24,37 @@ export function bmiCategory(value: number): BmiCategory {
   return 'obese';
 }
 
+/**
+ * Inverse of bmi(): weight (lb) corresponding to a given BMI at a given
+ * height (in). Returns NaN for invalid inputs.
+ */
+export function weightLbForBmi(bmiValue: number, heightIn: number): number {
+  if (
+    !Number.isFinite(bmiValue) ||
+    !Number.isFinite(heightIn) ||
+    heightIn <= 0
+  ) {
+    return NaN;
+  }
+  return (bmiValue * heightIn * heightIn) / 703;
+}
+
+/**
+ * Healthy-BMI weight range (BMI 18.5–25) in lb for a given height.
+ * Returns null if height is invalid.
+ */
+export function healthyWeightRangeLb(
+  heightIn: number | null | undefined,
+): { minLb: number; maxLb: number } | null {
+  if (heightIn == null || !Number.isFinite(heightIn) || heightIn <= 0) {
+    return null;
+  }
+  return {
+    minLb: weightLbForBmi(18.5, heightIn),
+    maxLb: weightLbForBmi(25, heightIn),
+  };
+}
+
 /** "185.4 lb", or "—" for null/NaN. */
 export function formatWeight(lb: number | null | undefined, digits = 1): string {
   if (lb == null || !Number.isFinite(lb)) return '—';

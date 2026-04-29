@@ -3,7 +3,13 @@
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Profile } from '@/lib/types';
-import { bmi, bmiCategory, formatHeight, parseHeight } from '@/lib/units';
+import {
+  bmi,
+  bmiCategory,
+  formatHeight,
+  healthyWeightRangeLb,
+  parseHeight,
+} from '@/lib/units';
 import { updateProfile } from '@/server/actions';
 
 export interface ProfileClientProps {
@@ -63,9 +69,19 @@ export default function ProfileClient({
     heightIn !== null && liveWeight !== null
       ? bmi(liveWeight, heightIn)
       : null;
+  const suggested = healthyWeightRangeLb(heightIn);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((s) => ({ ...s, [key]: value }));
+  }
+
+  function applySuggestedTargets() {
+    if (!suggested) return;
+    setForm((s) => ({
+      ...s,
+      targetWeightMinLb: String(Math.round(suggested.minLb)),
+      targetWeightMaxLb: String(Math.round(suggested.maxLb)),
+    }));
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -217,6 +233,30 @@ export default function ProfileClient({
             className={inputCls}
           />
         </Field>
+        <div className="sm:col-span-2">
+          {suggested ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+              <span>
+                Suggested for {formatHeight(heightIn)}:{' '}
+                <span className="font-semibold">
+                  {Math.round(suggested.minLb)}–{Math.round(suggested.maxLb)} lb
+                </span>{' '}
+                <span className="text-emerald-700">(BMI 18.5–25)</span>
+              </span>
+              <button
+                type="button"
+                onClick={applySuggestedTargets}
+                className="ml-auto inline-flex h-7 items-center rounded-md border border-emerald-600 bg-white px-2.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"
+              >
+                Use these
+              </button>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">
+              Enter a height above to see a suggested healthy-BMI target range.
+            </p>
+          )}
+        </div>
         <Field label="Daily calorie target">
           <input
             type="text"

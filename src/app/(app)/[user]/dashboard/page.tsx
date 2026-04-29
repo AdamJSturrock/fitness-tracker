@@ -94,6 +94,7 @@ export default async function DashboardPage({
         projection={projectionResult?.projection ?? null}
         targetMinLb={profile.targetWeightMinLb}
         targetMaxLb={profile.targetWeightMaxLb}
+        heightIn={profile.heightIn}
         todayIso={today}
       />
     </div>
