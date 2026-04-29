@@ -2,7 +2,10 @@
 // Field names here are the canonical source of truth across server actions,
 // queries, and UI components. Do not deviate.
 
-export type UserName = 'adam' | 'anna';
+export type UserName = 'adam' | 'anna' | 'demo';
+
+/** Single source of truth for the valid `[user]` URL segments. */
+export const VALID_USERS: readonly UserName[] = ['adam', 'anna', 'demo'];
 
 export interface Profile {
   id: number;

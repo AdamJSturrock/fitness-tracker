@@ -3,7 +3,7 @@ import type { UserName } from '@/lib/types';
 import { getEntries, getProfile } from '@/server/queries';
 import ProfileClient from './profile-client';
 
-const VALID_USERS: readonly UserName[] = ['adam', 'anna'];
+const VALID_USERS: readonly UserName[] = ['adam', 'anna', 'demo'];
 
 export default async function ProfilePage({
   params,

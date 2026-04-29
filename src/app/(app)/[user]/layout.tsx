@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import type { UserName } from '@/lib/types';
 import { getProfile } from '@/server/queries';
 
-const VALID_USERS: readonly UserName[] = ['adam', 'anna'];
+const VALID_USERS: readonly UserName[] = ['adam', 'anna', 'demo'];
 
 export default async function UserLayout({
   children,

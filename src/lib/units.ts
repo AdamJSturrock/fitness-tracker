@@ -55,6 +55,77 @@ export function healthyWeightRangeLb(
   };
 }
 
+// ---- BMR / TDEE / calorie target ----
+
+/** PAL (Physical Activity Level) multipliers — Mifflin-St Jeor convention. */
+export const ACTIVITY_LEVELS = {
+  sedentary: { label: 'Sedentary (desk job, no exercise)', multiplier: 1.2 },
+  light: { label: 'Lightly active (1–3 days/wk)', multiplier: 1.375 },
+  moderate: { label: 'Moderately active (3–5 days/wk)', multiplier: 1.55 },
+  very: { label: 'Very active (6–7 days/wk)', multiplier: 1.725 },
+  extra: { label: 'Extra active (physical job + training)', multiplier: 1.9 },
+} as const;
+export type ActivityLevel = keyof typeof ACTIVITY_LEVELS;
+
+/**
+ * Mifflin-St Jeor BMR (kcal/day).
+ *   male:   10·kg + 6.25·cm − 5·age + 5
+ *   female: 10·kg + 6.25·cm − 5·age − 161
+ * Returns null if any required input is missing/invalid.
+ */
+export function bmrMifflinStJeor(input: {
+  weightLb: number | null | undefined;
+  heightIn: number | null | undefined;
+  age: number | null | undefined;
+  sex: 'm' | 'f' | null | undefined;
+}): number | null {
+  const { weightLb, heightIn, age, sex } = input;
+  if (
+    weightLb == null ||
+    heightIn == null ||
+    age == null ||
+    sex == null ||
+    !Number.isFinite(weightLb) ||
+    !Number.isFinite(heightIn) ||
+    !Number.isFinite(age) ||
+    weightLb <= 0 ||
+    heightIn <= 0 ||
+    age <= 0
+  ) {
+    return null;
+  }
+  const kg = weightLb / 2.2046226218;
+  const cm = heightIn * 2.54;
+  const base = 10 * kg + 6.25 * cm - 5 * age;
+  return sex === 'm' ? base + 5 : base - 161;
+}
+
+/** TDEE = BMR × activity multiplier. Null in → null out. */
+export function tdee(
+  bmr: number | null,
+  activity: ActivityLevel,
+): number | null {
+  if (bmr == null || !Number.isFinite(bmr)) return null;
+  return bmr * ACTIVITY_LEVELS[activity].multiplier;
+}
+
+/**
+ * Daily calorie target = TDEE − (3500 × lossLbPerWeek / 7).
+ * lossLbPerWeek = 0 means maintenance. Negative is rejected.
+ * Returns null if tdee is null. Floors at 1200 kcal (loose minimum
+ * floor recommended for adult women; below this requires medical
+ * supervision).
+ */
+export function calorieTargetForGoal(
+  tdeeKcal: number | null,
+  lossLbPerWeek: number,
+): number | null {
+  if (tdeeKcal == null || !Number.isFinite(tdeeKcal)) return null;
+  if (!Number.isFinite(lossLbPerWeek) || lossLbPerWeek < 0) return null;
+  const deficit = (3500 * lossLbPerWeek) / 7;
+  return Math.max(1200, Math.round(tdeeKcal - deficit));
+}
+
 /** "185.4 lb", or "—" for null/NaN. */
 export function formatWeight(lb: number | null | undefined, digits = 1): string {
   if (lb == null || !Number.isFinite(lb)) return '—';

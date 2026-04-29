@@ -27,7 +27,7 @@ const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, {
   message: 'date must be YYYY-MM-DD',
 });
 
-const userNameEnum = z.enum(['adam', 'anna']);
+const userNameEnum = z.enum(['adam', 'anna', 'demo']);
 const sexEnum = z.enum(['m', 'f']);
 
 // Helper: throw with a clear, user-readable error from a ZodError.
@@ -59,11 +59,11 @@ function revalidateMealPaths(name: UserName) {
 }
 
 function revalidateFoodPaths() {
-  // Foods are shared across both users.
-  revalidatePath(`/adam/foods`);
-  revalidatePath(`/anna/foods`);
-  revalidatePath(`/adam/today`);
-  revalidatePath(`/anna/today`);
+  // Foods are shared across all users.
+  for (const u of ['adam', 'anna', 'demo'] as const) {
+    revalidatePath(`/${u}/foods`);
+    revalidatePath(`/${u}/today`);
+  }
 }
 
 async function userNameById(id: number): Promise<UserName> {
@@ -75,7 +75,7 @@ async function userNameById(id: number): Promise<UserName> {
   const row = r.rows[0];
   if (!row) throw new Error(`User id=${id} not found`);
   const name = String(row.name);
-  if (name !== 'adam' && name !== 'anna') {
+  if (name !== 'adam' && name !== 'anna' && name !== 'demo') {
     throw new Error(`Unexpected user name '${name}'`);
   }
   return name;
@@ -466,11 +466,11 @@ function revalidateWorkoutPathsForUser(name: UserName) {
 }
 
 function revalidateExerciseLibrary() {
-  // Exercise library is shared.
-  revalidatePath('/adam/today');
-  revalidatePath('/anna/today');
-  revalidatePath('/adam/routines');
-  revalidatePath('/anna/routines');
+  // Exercise library is shared across all users.
+  for (const u of ['adam', 'anna', 'demo'] as const) {
+    revalidatePath(`/${u}/today`);
+    revalidatePath(`/${u}/routines`);
+  }
 }
 
 // ---------- exercises (shared library) ----------

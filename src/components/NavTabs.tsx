@@ -16,7 +16,9 @@ export default function NavTabs() {
   const params = useParams<{ user?: string }>();
   const pathname = usePathname() ?? '';
   const user: UserName =
-    params?.user === 'adam' || params?.user === 'anna'
+    params?.user === 'adam' ||
+    params?.user === 'anna' ||
+    params?.user === 'demo'
       ? (params.user as UserName)
       : 'adam';
 

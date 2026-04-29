@@ -3,7 +3,7 @@ import type { UserName } from '@/lib/types';
 import { getProfile, listFoods } from '@/server/queries';
 import FoodsClient from './foods-client';
 
-const VALID_USERS: readonly UserName[] = ['adam', 'anna'];
+const VALID_USERS: readonly UserName[] = ['adam', 'anna', 'demo'];
 
 export default async function FoodsPage({
   params,

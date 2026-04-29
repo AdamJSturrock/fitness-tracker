@@ -13,7 +13,7 @@ import {
 import { todayIso } from '@/lib/dateUtils';
 import TodayClient from './today-client';
 
-const VALID_USERS: readonly UserName[] = ['adam', 'anna'];
+const VALID_USERS: readonly UserName[] = ['adam', 'anna', 'demo'];
 
 export default async function TodayPage({
   params,

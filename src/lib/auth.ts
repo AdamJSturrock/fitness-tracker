@@ -67,17 +67,19 @@ export async function isAuthed(): Promise<boolean> {
 // Used by `(app)/page.tsx` to redirect to the right `/[user]/dashboard`.
 // ---------------------------------------------------------------------------
 
-const VALID_USERS: readonly UserName[] = ['adam', 'anna'];
+import { VALID_USERS as VALID_USER_NAMES } from '@/lib/types';
 
 export async function getLastUser(): Promise<UserName> {
   const cookieStore = await cookies();
   const value = cookieStore.get(USER_COOKIE_NAME)?.value;
-  if (value === 'adam' || value === 'anna') return value;
+  if (value && (VALID_USER_NAMES as readonly string[]).includes(value)) {
+    return value as UserName;
+  }
   return 'adam';
 }
 
 export async function setLastUser(user: UserName): Promise<void> {
-  if (!VALID_USERS.includes(user)) {
+  if (!VALID_USER_NAMES.includes(user)) {
     throw new Error(`Invalid user '${user}'`);
   }
   const cookieStore = await cookies();

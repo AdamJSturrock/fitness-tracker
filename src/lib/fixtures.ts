@@ -47,6 +47,20 @@ export const mockProfiles: Record<UserName, Profile> = {
     dailyCalorieTarget: 1700,
     dailyStepTarget: 10000,
   },
+  demo: {
+    id: 3,
+    name: 'demo',
+    displayName: 'Demo',
+    heightIn: 70,
+    age: 34,
+    sex: 'm',
+    startWeightLb: 195,
+    startDate: '2026-03-01',
+    targetWeightMinLb: 165,
+    targetWeightMaxLb: 175,
+    dailyCalorieTarget: 2000,
+    dailyStepTarget: 10000,
+  },
 };
 
 // ---------- Foods ----------

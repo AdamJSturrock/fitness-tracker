@@ -15,7 +15,7 @@ import StatsPanel from '@/components/StatsPanel';
 import WeightChart from '@/components/WeightChart';
 import { todayIso } from '@/lib/dateUtils';
 
-const VALID_USERS: readonly UserName[] = ['adam', 'anna'];
+const VALID_USERS: readonly UserName[] = ['adam', 'anna', 'demo'];
 
 export default async function DashboardPage({
   params,

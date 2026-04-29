@@ -8,7 +8,7 @@ import {
 } from '@/server/queries';
 import RoutinesClient from './routines-client';
 
-const VALID_USERS: readonly UserName[] = ['adam', 'anna'];
+const VALID_USERS: readonly UserName[] = ['adam', 'anna', 'demo'];
 
 export default async function RoutinesPage({
   params,

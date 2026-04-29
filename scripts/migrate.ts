@@ -144,12 +144,24 @@ async function main() {
 
   console.log('[migrate] seeding users (INSERT OR IGNORE)');
   await client.execute({
-    sql: `INSERT OR IGNORE INTO users (name, display_name) VALUES (?, ?)`,
-    args: ['adam', 'Adam'],
+    sql: `INSERT OR IGNORE INTO users (name, display_name, sex) VALUES (?, ?, ?)`,
+    args: ['adam', 'Adam', 'm'],
   });
   await client.execute({
-    sql: `INSERT OR IGNORE INTO users (name, display_name) VALUES (?, ?)`,
-    args: ['anna', 'Anna'],
+    sql: `INSERT OR IGNORE INTO users (name, display_name, sex) VALUES (?, ?, ?)`,
+    args: ['anna', 'Anna', 'f'],
+  });
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO users (name, display_name, sex) VALUES (?, ?, ?)`,
+    args: ['demo', 'Demo', 'm'],
+  });
+  // Backfill sex on rows seeded before we baked it into the seed. Idempotent
+  // and only fills NULL, so a manual override on the row is preserved.
+  await client.execute({
+    sql: `UPDATE users SET sex = 'm' WHERE name = 'adam' AND sex IS NULL`,
+  });
+  await client.execute({
+    sql: `UPDATE users SET sex = 'f' WHERE name = 'anna' AND sex IS NULL`,
   });
 
   const result = await client.execute(

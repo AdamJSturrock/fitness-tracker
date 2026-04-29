@@ -4,11 +4,16 @@ import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Profile } from '@/lib/types';
 import {
+  ACTIVITY_LEVELS,
+  type ActivityLevel,
   bmi,
   bmiCategory,
+  bmrMifflinStJeor,
+  calorieTargetForGoal,
   formatHeight,
   healthyWeightRangeLb,
   parseHeight,
+  tdee,
 } from '@/lib/units';
 import { updateProfile } from '@/server/actions';
 
@@ -26,6 +31,8 @@ interface FormState {
   targetWeightMaxLb: string;
   dailyCalorieTarget: string;
   dailyStepTarget: string;
+  activityLevel: ActivityLevel;
+  goalLossLbPerWeek: string;
 }
 
 function fmtNum(n: number | null): string {
@@ -42,6 +49,8 @@ function initialState(p: Profile): FormState {
     targetWeightMaxLb: fmtNum(p.targetWeightMaxLb),
     dailyCalorieTarget: fmtNum(p.dailyCalorieTarget),
     dailyStepTarget: fmtNum(p.dailyStepTarget),
+    activityLevel: 'light',
+    goalLossLbPerWeek: '1',
   };
 }
 
@@ -71,6 +80,24 @@ export default function ProfileClient({
       : null;
   const suggested = healthyWeightRangeLb(heightIn);
 
+  // Calorie target suggestion (Mifflin-St Jeor BMR × activity − goal deficit)
+  const ageNum = (() => {
+    const n = Number(form.age);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  })();
+  const bmrVal = bmrMifflinStJeor({
+    weightLb: liveWeight,
+    heightIn,
+    age: ageNum,
+    sex: profile.sex,
+  });
+  const tdeeVal = tdee(bmrVal, form.activityLevel);
+  const goalLoss = (() => {
+    const n = Number(form.goalLossLbPerWeek);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  })();
+  const suggestedKcal = calorieTargetForGoal(tdeeVal, goalLoss);
+
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((s) => ({ ...s, [key]: value }));
   }
@@ -82,6 +109,11 @@ export default function ProfileClient({
       targetWeightMinLb: String(Math.round(suggested.minLb)),
       targetWeightMaxLb: String(Math.round(suggested.maxLb)),
     }));
+  }
+
+  function applySuggestedKcal() {
+    if (suggestedKcal == null) return;
+    setForm((s) => ({ ...s, dailyCalorieTarget: String(suggestedKcal) }));
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -279,6 +311,83 @@ export default function ProfileClient({
             className={inputCls}
           />
         </Field>
+
+        <div className="sm:col-span-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+            Suggested calorie target
+          </p>
+          <p className="mt-1 text-xs text-emerald-900">
+            Mifflin-St Jeor BMR × activity − goal deficit. Updates as your
+            weight changes.
+          </p>
+          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <label className="block">
+              <span className="block text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+                Activity level
+              </span>
+              <select
+                value={form.activityLevel}
+                onChange={(e) =>
+                  update('activityLevel', e.target.value as ActivityLevel)
+                }
+                className="mt-1 block h-10 w-full rounded-md border border-emerald-300 bg-white px-2 text-sm text-slate-900"
+              >
+                {(
+                  Object.entries(ACTIVITY_LEVELS) as [
+                    ActivityLevel,
+                    (typeof ACTIVITY_LEVELS)[ActivityLevel],
+                  ][]
+                ).map(([key, val]) => (
+                  <option key={key} value={key}>
+                    {val.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="block text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+                Goal
+              </span>
+              <select
+                value={form.goalLossLbPerWeek}
+                onChange={(e) => update('goalLossLbPerWeek', e.target.value)}
+                className="mt-1 block h-10 w-full rounded-md border border-emerald-300 bg-white px-2 text-sm text-slate-900"
+              >
+                <option value="0">Maintain weight</option>
+                <option value="0.5">Lose ½ lb / week</option>
+                <option value="1">Lose 1 lb / week</option>
+                <option value="1.5">Lose 1½ lb / week</option>
+                <option value="2">Lose 2 lb / week (aggressive)</option>
+              </select>
+            </label>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            {suggestedKcal != null ? (
+              <span className="text-sm text-emerald-900">
+                Suggested:{' '}
+                <span className="font-bold">{suggestedKcal} kcal/day</span>
+                {tdeeVal != null ? (
+                  <span className="ml-2 text-xs text-emerald-700">
+                    (BMR ≈ {Math.round(bmrVal ?? 0)}, TDEE ≈{' '}
+                    {Math.round(tdeeVal)})
+                  </span>
+                ) : null}
+              </span>
+            ) : (
+              <span className="text-xs text-emerald-700">
+                Fill in height, age and start weight above to compute.
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={applySuggestedKcal}
+              disabled={suggestedKcal == null}
+              className="ml-auto inline-flex h-7 items-center rounded-md border border-emerald-600 bg-white px-2.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+            >
+              Use this
+            </button>
+          </div>
+        </div>
       </div>
 
       {error ? (

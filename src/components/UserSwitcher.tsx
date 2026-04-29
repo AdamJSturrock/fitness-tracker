@@ -7,6 +7,7 @@ import type { UserName } from '@/lib/types';
 const USERS: { name: UserName; label: string }[] = [
   { name: 'adam', label: 'Adam' },
   { name: 'anna', label: 'Anna' },
+  { name: 'demo', label: 'Demo' },
 ];
 
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
@@ -27,7 +28,9 @@ export default function UserSwitcher() {
   const [, startTransition] = useTransition();
 
   const current: UserName | null =
-    params?.user === 'adam' || params?.user === 'anna'
+    params?.user === 'adam' ||
+    params?.user === 'anna' ||
+    params?.user === 'demo'
       ? (params.user as UserName)
       : null;
 
