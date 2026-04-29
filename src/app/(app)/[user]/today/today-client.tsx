@@ -106,7 +106,14 @@ export default function TodayClient({
   }
   async function handleUpdateLog(
     logId: number,
-    patch: { sets?: number | null; reps?: number | null; weightLb?: number | null },
+    patch: {
+      sets?: number | null;
+      reps?: number | null;
+      weightLb?: number | null;
+      durationMin?: number | null;
+      distanceMi?: number | null;
+      kcalMachine?: number | null;
+    },
   ) {
     await updateExerciseLog({ id: logId, ...patch });
     refresh();

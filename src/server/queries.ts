@@ -336,27 +336,35 @@ function parseScheduleDays(raw: unknown): number[] {
     .sort((a, b) => a - b);
 }
 
+function parseCategory(raw: unknown): ExerciseCategory {
+  const s = String(raw);
+  return s === 'strength' || s === 'bodyweight' || s === 'cardio'
+    ? s
+    : 'strength';
+}
+
 function rowToExercise(r: Row): Exercise {
-  const cat = String(r.category);
-  const category: ExerciseCategory =
-    cat === 'strength' || cat === 'bodyweight' ? cat : 'strength';
   return {
     id: Number(r.id),
     name: String(r.name),
-    category,
+    category: parseCategory(r.category),
+    kcalCorrectionFactor:
+      r.kcal_correction_factor === null ||
+      r.kcal_correction_factor === undefined
+        ? 1
+        : Number(r.kcal_correction_factor),
     archived: Number(r.archived) !== 0,
     createdAt: String(r.created_at),
   };
 }
 
 function rowToExerciseAliased(r: Row, prefix: string): Exercise {
-  const cat = String(r[`${prefix}category`]);
-  const category: ExerciseCategory =
-    cat === 'strength' || cat === 'bodyweight' ? cat : 'strength';
+  const f = r[`${prefix}kcal_correction_factor`];
   return {
     id: Number(r[`${prefix}id`]),
     name: String(r[`${prefix}name`]),
-    category,
+    category: parseCategory(r[`${prefix}category`]),
+    kcalCorrectionFactor: f === null || f === undefined ? 1 : Number(f),
     archived: Number(r[`${prefix}archived`]) !== 0,
     createdAt: String(r[`${prefix}created_at`]),
   };
@@ -382,6 +390,8 @@ function rowToRoutineExercise(r: Row): RoutineExercise {
     targetSets: toIntOrNull(r.target_sets),
     targetReps: toIntOrNull(r.target_reps),
     targetWeightLb: toNumOrNull(r.target_weight_lb),
+    targetDurationMin: toNumOrNull(r.target_duration_min),
+    targetDistanceMi: toNumOrNull(r.target_distance_mi),
     notes: toStringOrNull(r.notes),
   };
 }
@@ -399,17 +409,21 @@ function rowToExerciseLog(r: Row): ExerciseLog {
     sets: toIntOrNull(r.sets),
     reps: toIntOrNull(r.reps),
     weightLb: toNumOrNull(r.weight_lb),
+    durationMin: toNumOrNull(r.duration_min),
+    distanceMi: toNumOrNull(r.distance_mi),
+    kcalMachine: toIntOrNull(r.kcal_machine),
     notes: toStringOrNull(r.notes),
     createdAt: String(r.created_at),
   };
 }
 
 const EX_JOIN_COLUMNS = `
-  exercises.id         AS ex_id,
-  exercises.name       AS ex_name,
-  exercises.category   AS ex_category,
-  exercises.archived   AS ex_archived,
-  exercises.created_at AS ex_created_at
+  exercises.id                     AS ex_id,
+  exercises.name                   AS ex_name,
+  exercises.category               AS ex_category,
+  exercises.kcal_correction_factor AS ex_kcal_correction_factor,
+  exercises.archived               AS ex_archived,
+  exercises.created_at             AS ex_created_at
 `;
 
 export async function listExercises(opts?: {
@@ -428,7 +442,7 @@ export async function listExercises(opts?: {
   }
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
   const result = await db.execute({
-    sql: `SELECT id, name, category, archived, created_at
+    sql: `SELECT id, name, category, kcal_correction_factor, archived, created_at
             FROM exercises
             ${whereSql}
            ORDER BY name COLLATE NOCASE ASC, id ASC`,
@@ -470,7 +484,10 @@ export async function getRoutineWithExercises(
     sql: `SELECT routine_exercises.id, routine_exercises.routine_id,
                  routine_exercises.exercise_id, routine_exercises.position,
                  routine_exercises.target_sets, routine_exercises.target_reps,
-                 routine_exercises.target_weight_lb, routine_exercises.notes,
+                 routine_exercises.target_weight_lb,
+                 routine_exercises.target_duration_min,
+                 routine_exercises.target_distance_mi,
+                 routine_exercises.notes,
                  ${EX_JOIN_COLUMNS}
             FROM routine_exercises
             JOIN exercises ON exercises.id = routine_exercises.exercise_id
@@ -516,7 +533,7 @@ export async function getExerciseLogsForDate(
   const result = await db.execute({
     sql: `SELECT exercise_logs.id, exercise_logs.user_id, exercise_logs.date,
                  exercise_logs.exercise_id, exercise_logs.routine_id,
-                 exercise_logs.sets, exercise_logs.reps, exercise_logs.weight_lb,
+                 exercise_logs.sets, exercise_logs.reps, exercise_logs.weight_lb, exercise_logs.duration_min, exercise_logs.distance_mi, exercise_logs.kcal_machine,
                  exercise_logs.notes, exercise_logs.created_at,
                  ${EX_JOIN_COLUMNS}
             FROM exercise_logs
@@ -638,7 +655,7 @@ export async function getExerciseLogById(
   const result = await db.execute({
     sql: `SELECT exercise_logs.id, exercise_logs.user_id, exercise_logs.date,
                  exercise_logs.exercise_id, exercise_logs.routine_id,
-                 exercise_logs.sets, exercise_logs.reps, exercise_logs.weight_lb,
+                 exercise_logs.sets, exercise_logs.reps, exercise_logs.weight_lb, exercise_logs.duration_min, exercise_logs.distance_mi, exercise_logs.kcal_machine,
                  exercise_logs.notes, exercise_logs.created_at,
                  ${EX_JOIN_COLUMNS}
             FROM exercise_logs

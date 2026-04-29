@@ -24,6 +24,9 @@ export interface WorkoutSectionProps {
       sets?: number | null;
       reps?: number | null;
       weightLb?: number | null;
+      durationMin?: number | null;
+      distanceMi?: number | null;
+      kcalMachine?: number | null;
     },
   ) => Promise<void>;
 }
@@ -32,6 +35,14 @@ const DOW_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 function formatTarget(row: TodayRoutineRow): string {
   const re = row.routineExercise;
+  if (re.exercise.category === 'cardio') {
+    const dur = re.targetDurationMin;
+    const dist = re.targetDistanceMi;
+    if (dur && dist) return `${dur} min · ${dist} mi`;
+    if (dur) return `${dur} min`;
+    if (dist) return `${dist} mi`;
+    return '—';
+  }
   const sets = re.targetSets;
   const reps = re.targetReps;
   const w = re.targetWeightLb;
@@ -153,11 +164,20 @@ function RoutineRow({
   onUntick: (routineExerciseId: number) => Promise<void>;
   onUpdateLog: (
     logId: number,
-    patch: { sets?: number | null; reps?: number | null; weightLb?: number | null },
+    patch: {
+      sets?: number | null;
+      reps?: number | null;
+      weightLb?: number | null;
+      durationMin?: number | null;
+      distanceMi?: number | null;
+      kcalMachine?: number | null;
+    },
   ) => Promise<void>;
 }) {
   const re = row.routineExercise;
-  const isBodyweight = re.exercise.category === 'bodyweight';
+  const category = re.exercise.category;
+  const isBodyweight = category === 'bodyweight';
+  const isCardio = category === 'cardio';
   const isDone = row.log !== null;
   const [busy, setBusy] = useState(false);
 
@@ -171,6 +191,22 @@ function RoutineRow({
   const [weight, setWeight] = useState<string>(
     row.log?.weightLb != null ? String(row.log.weightLb) : '',
   );
+  const [duration, setDuration] = useState<string>(
+    row.log?.durationMin != null ? String(row.log.durationMin) : '',
+  );
+  const [distance, setDistance] = useState<string>(
+    row.log?.distanceMi != null ? String(row.log.distanceMi) : '',
+  );
+  const [kcalMachine, setKcalMachine] = useState<string>(
+    row.log?.kcalMachine != null ? String(row.log.kcalMachine) : '',
+  );
+
+  const correction = re.exercise.kcalCorrectionFactor;
+  const enteredKcal = Number(kcalMachine);
+  const correctedKcal =
+    Number.isFinite(enteredKcal) && enteredKcal > 0
+      ? Math.round(enteredKcal * correction)
+      : null;
 
   async function toggle() {
     setBusy(true);
@@ -185,15 +221,30 @@ function RoutineRow({
     }
   }
 
-  async function saveLogField(field: 'sets' | 'reps' | 'weightLb', raw: string) {
+  async function saveLogField(
+    field:
+      | 'sets'
+      | 'reps'
+      | 'weightLb'
+      | 'durationMin'
+      | 'distanceMi'
+      | 'kcalMachine',
+    raw: string,
+  ) {
     if (!row.log) return;
     const trimmed = raw.trim();
     let value: number | null;
-    if (trimmed === '') value = null;
-    else {
+    if (trimmed === '') {
+      value = null;
+    } else {
       const n = Number(trimmed);
       if (!Number.isFinite(n) || n <= 0) return;
-      value = field === 'weightLb' ? n : Math.round(n);
+      value =
+        field === 'weightLb' ||
+        field === 'durationMin' ||
+        field === 'distanceMi'
+          ? n
+          : Math.round(n);
     }
     setBusy(true);
     try {
@@ -201,6 +252,24 @@ function RoutineRow({
     } finally {
       setBusy(false);
     }
+  }
+
+  function categoryBadge() {
+    if (isCardio) {
+      return (
+        <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-700">
+          Cardio
+        </span>
+      );
+    }
+    if (isBodyweight) {
+      return (
+        <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+          Bodyweight
+        </span>
+      );
+    }
+    return null;
   }
 
   return (
@@ -232,45 +301,85 @@ function RoutineRow({
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-slate-900">
             {re.exercise.name}
-            {isBodyweight ? (
-              <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                Bodyweight
-              </span>
-            ) : null}
+            {categoryBadge()}
           </p>
           <p className="text-xs text-slate-500">{formatTarget(row)}</p>
         </div>
       </div>
 
       {isDone ? (
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <NumField
-            label="Sets"
-            value={sets}
-            onChange={setSets}
-            onCommit={(v) => saveLogField('sets', v)}
-            disabled={busy}
-          />
-          <NumField
-            label="Reps"
-            value={reps}
-            onChange={setReps}
-            onCommit={(v) => saveLogField('reps', v)}
-            disabled={busy}
-          />
-          {isBodyweight ? (
-            <div />
-          ) : (
+        isCardio ? (
+          <div className="mt-3 space-y-2">
+            <div className="grid grid-cols-3 gap-2">
+              <NumField
+                label="Minutes"
+                value={duration}
+                onChange={setDuration}
+                onCommit={(v) => saveLogField('durationMin', v)}
+                decimal
+                disabled={busy}
+              />
+              <NumField
+                label="Distance (mi)"
+                value={distance}
+                onChange={setDistance}
+                onCommit={(v) => saveLogField('distanceMi', v)}
+                decimal
+                disabled={busy}
+              />
+              <NumField
+                label="Machine kcal"
+                value={kcalMachine}
+                onChange={setKcalMachine}
+                onCommit={(v) => saveLogField('kcalMachine', v)}
+                disabled={busy}
+              />
+            </div>
+            {correctedKcal != null ? (
+              <p className="rounded-md bg-sky-50 px-2 py-1.5 text-xs text-sky-900">
+                Corrected estimate:{' '}
+                <span className="font-bold">{correctedKcal} kcal</span>{' '}
+                <span className="text-sky-700">
+                  ({Math.round(correction * 100)}% of {Math.round(enteredKcal)})
+                </span>
+              </p>
+            ) : (
+              <p className="text-[11px] text-slate-400">
+                Enter the machine&rsquo;s kcal reading; we&rsquo;ll show a more
+                realistic figure ({Math.round(correction * 100)}% factor).
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="mt-3 grid grid-cols-3 gap-2">
             <NumField
-              label="Weight (lb)"
-              value={weight}
-              onChange={setWeight}
-              onCommit={(v) => saveLogField('weightLb', v)}
-              decimal
+              label="Sets"
+              value={sets}
+              onChange={setSets}
+              onCommit={(v) => saveLogField('sets', v)}
               disabled={busy}
             />
-          )}
-        </div>
+            <NumField
+              label="Reps"
+              value={reps}
+              onChange={setReps}
+              onCommit={(v) => saveLogField('reps', v)}
+              disabled={busy}
+            />
+            {isBodyweight ? (
+              <div />
+            ) : (
+              <NumField
+                label="Weight (lb)"
+                value={weight}
+                onChange={setWeight}
+                onCommit={(v) => saveLogField('weightLb', v)}
+                decimal
+                disabled={busy}
+              />
+            )}
+          </div>
+        )
       ) : null}
     </li>
   );

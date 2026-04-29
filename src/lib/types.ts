@@ -66,12 +66,18 @@ export interface DayCalorieTotal {
 
 // ---- Phase 1: workouts ----
 
-export type ExerciseCategory = 'strength' | 'bodyweight';
+export type ExerciseCategory = 'strength' | 'bodyweight' | 'cardio';
 
 export interface Exercise {
   id: number;
   name: string;
   category: ExerciseCategory;
+  /**
+   * Multiplier applied to user-entered "machine kcal" before display.
+   * 1.0 by default; <1 when the machine over-reports (e.g. 0.67 for older
+   * elliptical/treadmill consoles). >1 is allowed but unusual.
+   */
+  kcalCorrectionFactor: number;
   archived: boolean;
   createdAt: string;
 }
@@ -94,6 +100,10 @@ export interface RoutineExercise {
   targetSets: number | null;
   targetReps: number | null;
   targetWeightLb: number | null;
+  /** Cardio target: minutes (e.g. 30). */
+  targetDurationMin: number | null;
+  /** Cardio target: distance in miles (optional, secondary to minutes). */
+  targetDistanceMi: number | null;
   notes: string | null;
 }
 
@@ -114,6 +124,12 @@ export interface ExerciseLog {
   sets: number | null;
   reps: number | null;
   weightLb: number | null;
+  /** Cardio: actual minutes done. */
+  durationMin: number | null;
+  /** Cardio: actual distance in miles. */
+  distanceMi: number | null;
+  /** Cardio: machine-reported calories before correction factor. */
+  kcalMachine: number | null;
   notes: string | null;
   createdAt: string;
 }

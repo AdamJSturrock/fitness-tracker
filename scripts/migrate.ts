@@ -160,6 +160,36 @@ async function main() {
     }
   }
   await tryAddColumn('users', 'target_date', 'TEXT');
+  // Phase 2: cardio support
+  await tryAddColumn('exercises', 'kcal_correction_factor', 'REAL NOT NULL DEFAULT 1.0');
+  await tryAddColumn('routine_exercises', 'target_duration_min', 'REAL');
+  await tryAddColumn('routine_exercises', 'target_distance_mi', 'REAL');
+  await tryAddColumn('exercise_logs', 'duration_min', 'REAL');
+  await tryAddColumn('exercise_logs', 'distance_mi', 'REAL');
+  await tryAddColumn('exercise_logs', 'kcal_machine', 'INTEGER');
+
+  // Seed an Elliptical exercise with the 0.67 correction factor so it's
+  // available in the shared library without anyone having to add it.
+  console.log('[migrate] seeding shared cardio exercises');
+  const ellipticalLookup = await client.execute({
+    sql: `SELECT id FROM exercises WHERE name = 'Elliptical' LIMIT 1`,
+  });
+  if (!ellipticalLookup.rows[0]) {
+    await client.execute({
+      sql: `INSERT INTO exercises (name, category, kcal_correction_factor)
+            VALUES (?, ?, ?)`,
+      args: ['Elliptical', 'cardio', 0.67],
+    });
+  } else {
+    // Ensure category + factor are right even if it pre-exists with defaults.
+    await client.execute({
+      sql: `UPDATE exercises
+              SET category = 'cardio',
+                  kcal_correction_factor = COALESCE(kcal_correction_factor, 0.67)
+            WHERE id = ?`,
+      args: [ellipticalLookup.rows[0].id],
+    });
+  }
 
   console.log('[migrate] seeding users (INSERT OR IGNORE)');
   await client.execute({

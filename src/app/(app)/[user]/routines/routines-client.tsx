@@ -320,7 +320,10 @@ function ExerciseRow({
   onChange: () => void;
   disabled?: boolean;
 }) {
-  const isBodyweight = re.exercise.category === 'bodyweight';
+  const category = re.exercise.category;
+  const isBodyweight = category === 'bodyweight';
+  const isCardio = category === 'cardio';
+
   const [sets, setSets] = useState(
     re.targetSets != null ? String(re.targetSets) : '',
   );
@@ -330,24 +333,65 @@ function ExerciseRow({
   const [weight, setWeight] = useState(
     re.targetWeightLb != null ? String(re.targetWeightLb) : '',
   );
+  const [duration, setDuration] = useState(
+    re.targetDurationMin != null ? String(re.targetDurationMin) : '',
+  );
+  const [distance, setDistance] = useState(
+    re.targetDistanceMi != null ? String(re.targetDistanceMi) : '',
+  );
 
-  async function persist(field: 'sets' | 'reps' | 'weightLb', raw: string) {
+  async function persist(
+    field:
+      | 'sets'
+      | 'reps'
+      | 'weightLb'
+      | 'durationMin'
+      | 'distanceMi',
+    raw: string,
+  ) {
     const trimmed = raw.trim();
     let value: number | null;
     if (trimmed === '') value = null;
     else {
       const n = Number(trimmed);
       if (!Number.isFinite(n) || n <= 0) return;
-      value = field === 'weightLb' ? n : Math.round(n);
+      value =
+        field === 'weightLb' ||
+        field === 'durationMin' ||
+        field === 'distanceMi'
+          ? n
+          : Math.round(n);
     }
     const patch =
       field === 'sets'
         ? { targetSets: value }
         : field === 'reps'
           ? { targetReps: value }
-          : { targetWeightLb: value };
+          : field === 'weightLb'
+            ? { targetWeightLb: value }
+            : field === 'durationMin'
+              ? { targetDurationMin: value }
+              : { targetDistanceMi: value };
     await updateRoutineExercise({ id: re.id, ...patch });
     onChange();
+  }
+
+  function categoryBadge() {
+    if (isCardio) {
+      return (
+        <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-700">
+          Cardio
+        </span>
+      );
+    }
+    if (isBodyweight) {
+      return (
+        <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+          Bodyweight
+        </span>
+      );
+    }
+    return null;
   }
 
   return (
@@ -355,11 +399,7 @@ function ExerciseRow({
       <div className="flex items-center justify-between gap-3">
         <p className="min-w-0 truncate text-sm font-semibold text-slate-900">
           {re.exercise.name}
-          {isBodyweight ? (
-            <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-              Bodyweight
-            </span>
-          ) : null}
+          {categoryBadge()}
         </p>
         <button
           type="button"
@@ -370,33 +410,52 @@ function ExerciseRow({
           Remove
         </button>
       </div>
-      <div className="mt-2 grid grid-cols-3 gap-2">
-        <NumField
-          label="Sets"
-          value={sets}
-          onChange={setSets}
-          onCommit={(v) => persist('sets', v)}
-        />
-        <NumField
-          label="Reps"
-          value={reps}
-          onChange={setReps}
-          onCommit={(v) => persist('reps', v)}
-        />
-        {isBodyweight ? (
-          <div className="rounded-md bg-slate-50 px-2 py-2 text-[11px] text-slate-400">
-            (no weight)
-          </div>
-        ) : (
+      {isCardio ? (
+        <div className="mt-2 grid grid-cols-2 gap-2">
           <NumField
-            label="Weight (lb)"
-            value={weight}
-            onChange={setWeight}
-            onCommit={(v) => persist('weightLb', v)}
+            label="Minutes target"
+            value={duration}
+            onChange={setDuration}
+            onCommit={(v) => persist('durationMin', v)}
             decimal
           />
-        )}
-      </div>
+          <NumField
+            label="Distance (mi) target"
+            value={distance}
+            onChange={setDistance}
+            onCommit={(v) => persist('distanceMi', v)}
+            decimal
+          />
+        </div>
+      ) : (
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <NumField
+            label="Sets"
+            value={sets}
+            onChange={setSets}
+            onCommit={(v) => persist('sets', v)}
+          />
+          <NumField
+            label="Reps"
+            value={reps}
+            onChange={setReps}
+            onCommit={(v) => persist('reps', v)}
+          />
+          {isBodyweight ? (
+            <div className="rounded-md bg-slate-50 px-2 py-2 text-[11px] text-slate-400">
+              (no weight)
+            </div>
+          ) : (
+            <NumField
+              label="Weight (lb)"
+              value={weight}
+              onChange={setWeight}
+              onCommit={(v) => persist('weightLb', v)}
+              decimal
+            />
+          )}
+        </div>
+      )}
     </li>
   );
 }
@@ -417,9 +476,10 @@ function AddExercise({
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
-  const [newCategory, setNewCategory] = useState<'strength' | 'bodyweight'>(
-    'strength',
-  );
+  const [newCategory, setNewCategory] = useState<
+    'strength' | 'bodyweight' | 'cardio'
+  >('strength');
+  const [newKcalFactorPct, setNewKcalFactorPct] = useState('67');
 
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -443,9 +503,15 @@ function AddExercise({
     if (newName.trim() === '') return;
     setBusy(true);
     try {
+      const factorPct = Number(newKcalFactorPct);
+      const factor =
+        newCategory === 'cardio' && Number.isFinite(factorPct) && factorPct > 0
+          ? factorPct / 100
+          : undefined;
       const ex = await createExercise({
         name: newName.trim(),
         category: newCategory,
+        ...(factor !== undefined ? { kcalCorrectionFactor: factor } : {}),
       });
       await addExerciseToRoutine({ routineId, exerciseId: ex.id });
       onAdded();
@@ -554,15 +620,38 @@ function AddExercise({
               <select
                 value={newCategory}
                 onChange={(e) =>
-                  setNewCategory(e.target.value as 'strength' | 'bodyweight')
+                  setNewCategory(
+                    e.target.value as 'strength' | 'bodyweight' | 'cardio',
+                  )
                 }
                 className="mt-1 block h-9 w-full rounded-md border border-emerald-300 bg-white px-2 text-sm"
               >
                 <option value="strength">Strength</option>
                 <option value="bodyweight">Bodyweight</option>
+                <option value="cardio">Cardio</option>
               </select>
             </label>
           </div>
+          {newCategory === 'cardio' ? (
+            <label className="block">
+              <span className="block text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+                Calorie correction (%)
+              </span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={newKcalFactorPct}
+                onChange={(e) =>
+                  setNewKcalFactorPct(e.target.value.replace(/[^0-9]/g, ''))
+                }
+                className="mt-1 block h-9 w-full rounded-md border border-emerald-300 bg-white px-2 text-sm"
+              />
+              <span className="mt-0.5 block text-[10px] text-emerald-700">
+                Older elliptical/treadmill consoles over-report by ~30%.
+                Default 67% (machine reading × 0.67).
+              </span>
+            </label>
+          ) : null}
           <div className="flex justify-end gap-2">
             <button
               type="button"

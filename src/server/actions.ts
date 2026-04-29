@@ -455,7 +455,7 @@ export async function removeMealItem(id: number): Promise<void> {
 // Phase 1: workouts (exercises, routines, exercise_logs)
 // ============================================================
 
-const exerciseCategoryEnum = z.enum(['strength', 'bodyweight']);
+const exerciseCategoryEnum = z.enum(['strength', 'bodyweight', 'cardio']);
 const scheduleDaysSchema = z
   .array(z.number().int().min(1).max(7))
   .max(7)
@@ -480,16 +480,22 @@ function revalidateExerciseLibrary() {
 const createExerciseSchema = z.object({
   name: z.string().min(1),
   category: exerciseCategoryEnum,
+  kcalCorrectionFactor: z.number().positive().max(2).optional(),
 });
 
 export async function createExercise(input: unknown): Promise<Exercise> {
   const data = parseOrThrow(createExerciseSchema, input, 'createExercise');
+  // Default elliptical/cardio to 0.67 if not specified, since modern exercise
+  // physiology research suggests older cardio machines over-report by ~30%.
+  // Strength/bodyweight default to 1.0 (no correction).
+  const factor =
+    data.kcalCorrectionFactor ?? (data.category === 'cardio' ? 0.67 : 1);
   const db = getDb();
   const result = await db.execute({
-    sql: `INSERT INTO exercises (name, category)
-          VALUES (?, ?)
-          RETURNING id, name, category, archived, created_at`,
-    args: [data.name, data.category],
+    sql: `INSERT INTO exercises (name, category, kcal_correction_factor)
+          VALUES (?, ?, ?)
+          RETURNING id, name, category, kcal_correction_factor, archived, created_at`,
+    args: [data.name, data.category, factor],
   });
   const row = result.rows[0];
   if (!row) throw new Error('createExercise: insert did not return a row');
@@ -497,6 +503,7 @@ export async function createExercise(input: unknown): Promise<Exercise> {
     id: Number(row.id),
     name: String(row.name),
     category: data.category,
+    kcalCorrectionFactor: Number(row.kcal_correction_factor),
     archived: Number(row.archived) !== 0,
     createdAt: String(row.created_at),
   };
@@ -508,6 +515,7 @@ const updateExerciseSchema = z.object({
   id: z.number().int().positive(),
   name: z.string().min(1).optional(),
   category: exerciseCategoryEnum.optional(),
+  kcalCorrectionFactor: z.number().positive().max(2).optional(),
 });
 
 export async function updateExercise(input: unknown): Promise<Exercise> {
@@ -523,6 +531,10 @@ export async function updateExercise(input: unknown): Promise<Exercise> {
     sets.push('category = ?');
     args.push(data.category);
   }
+  if (data.kcalCorrectionFactor !== undefined) {
+    sets.push('kcal_correction_factor = ?');
+    args.push(data.kcalCorrectionFactor);
+  }
   if (sets.length > 0) {
     args.push(data.id);
     await db.execute({
@@ -531,16 +543,23 @@ export async function updateExercise(input: unknown): Promise<Exercise> {
     });
   }
   const r = await db.execute({
-    sql: 'SELECT id, name, category, archived, created_at FROM exercises WHERE id = ?',
+    sql: 'SELECT id, name, category, kcal_correction_factor, archived, created_at FROM exercises WHERE id = ?',
     args: [data.id],
   });
   const row = r.rows[0];
   if (!row) throw new Error(`updateExercise: id=${data.id} not found`);
-  const cat = String(row.category);
+  const catRaw = String(row.category);
+  const category =
+    catRaw === 'bodyweight' || catRaw === 'cardio' ? catRaw : 'strength';
   const ex: Exercise = {
     id: Number(row.id),
     name: String(row.name),
-    category: cat === 'bodyweight' ? 'bodyweight' : 'strength',
+    category,
+    kcalCorrectionFactor:
+      row.kcal_correction_factor === null ||
+      row.kcal_correction_factor === undefined
+        ? 1
+        : Number(row.kcal_correction_factor),
     archived: Number(row.archived) !== 0,
     createdAt: String(row.created_at),
   };
@@ -701,6 +720,8 @@ const addExerciseToRoutineSchema = z.object({
   targetSets: z.number().int().positive().nullable().optional(),
   targetReps: z.number().int().positive().nullable().optional(),
   targetWeightLb: z.number().positive().nullable().optional(),
+  targetDurationMin: z.number().positive().nullable().optional(),
+  targetDistanceMi: z.number().positive().nullable().optional(),
   notes: z.string().nullable().optional(),
 });
 
@@ -733,10 +754,12 @@ export async function addExerciseToRoutine(
   const result = await db.execute({
     sql: `INSERT INTO routine_exercises
             (routine_id, exercise_id, position,
-             target_sets, target_reps, target_weight_lb, notes)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+             target_sets, target_reps, target_weight_lb,
+             target_duration_min, target_distance_mi, notes)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           RETURNING id, routine_id, exercise_id, position,
-                    target_sets, target_reps, target_weight_lb, notes`,
+                    target_sets, target_reps, target_weight_lb,
+                    target_duration_min, target_distance_mi, notes`,
     args: [
       data.routineId,
       data.exerciseId,
@@ -744,6 +767,8 @@ export async function addExerciseToRoutine(
       data.targetSets ?? null,
       data.targetReps ?? null,
       data.targetWeightLb ?? null,
+      data.targetDurationMin ?? null,
+      data.targetDistanceMi ?? null,
       data.notes ?? null,
     ],
   });
@@ -766,6 +791,14 @@ export async function addExerciseToRoutine(
       row.target_weight_lb === null || row.target_weight_lb === undefined
         ? null
         : Number(row.target_weight_lb),
+    targetDurationMin:
+      row.target_duration_min === null || row.target_duration_min === undefined
+        ? null
+        : Number(row.target_duration_min),
+    targetDistanceMi:
+      row.target_distance_mi === null || row.target_distance_mi === undefined
+        ? null
+        : Number(row.target_distance_mi),
     notes:
       row.notes === null || row.notes === undefined ? null : String(row.notes),
   };
@@ -781,6 +814,8 @@ const updateRoutineExerciseSchema = z.object({
   targetSets: z.number().int().positive().nullable().optional(),
   targetReps: z.number().int().positive().nullable().optional(),
   targetWeightLb: z.number().positive().nullable().optional(),
+  targetDurationMin: z.number().positive().nullable().optional(),
+  targetDistanceMi: z.number().positive().nullable().optional(),
   notes: z.string().nullable().optional(),
 });
 
@@ -804,6 +839,10 @@ export async function updateRoutineExercise(
   if ('targetReps' in data) push('target_reps', data.targetReps ?? null);
   if ('targetWeightLb' in data)
     push('target_weight_lb', data.targetWeightLb ?? null);
+  if ('targetDurationMin' in data)
+    push('target_duration_min', data.targetDurationMin ?? null);
+  if ('targetDistanceMi' in data)
+    push('target_distance_mi', data.targetDistanceMi ?? null);
   if ('notes' in data) push('notes', data.notes ?? null);
   if (sets.length > 0) {
     args.push(data.id);
@@ -814,7 +853,8 @@ export async function updateRoutineExercise(
   }
   const r = await db.execute({
     sql: `SELECT id, routine_id, exercise_id, position,
-                 target_sets, target_reps, target_weight_lb, notes
+                 target_sets, target_reps, target_weight_lb,
+                 target_duration_min, target_distance_mi, notes
             FROM routine_exercises WHERE id = ?`,
     args: [data.id],
   });
@@ -837,6 +877,14 @@ export async function updateRoutineExercise(
       row.target_weight_lb === null || row.target_weight_lb === undefined
         ? null
         : Number(row.target_weight_lb),
+    targetDurationMin:
+      row.target_duration_min === null || row.target_duration_min === undefined
+        ? null
+        : Number(row.target_duration_min),
+    targetDistanceMi:
+      row.target_distance_mi === null || row.target_distance_mi === undefined
+        ? null
+        : Number(row.target_distance_mi),
     notes:
       row.notes === null || row.notes === undefined ? null : String(row.notes),
   };
@@ -887,7 +935,8 @@ export async function tickRoutineExercise(
   const db = getDb();
   const reR = await db.execute({
     sql: `SELECT routine_id, exercise_id,
-                 target_sets, target_reps, target_weight_lb
+                 target_sets, target_reps, target_weight_lb,
+                 target_duration_min, target_distance_mi
             FROM routine_exercises WHERE id = ? LIMIT 1`,
     args: [data.routineExerciseId],
   });
@@ -915,8 +964,9 @@ export async function tickRoutineExercise(
     const ins = await db.execute({
       sql: `INSERT INTO exercise_logs
               (user_id, date, exercise_id, routine_id,
-               sets, reps, weight_lb)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+               sets, reps, weight_lb,
+               duration_min, distance_mi)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id`,
       args: [
         data.userId,
@@ -926,6 +976,8 @@ export async function tickRoutineExercise(
         re.target_sets ?? null,
         re.target_reps ?? null,
         re.target_weight_lb ?? null,
+        re.target_duration_min ?? null,
+        re.target_distance_mi ?? null,
       ],
     });
     logId = Number(ins.rows[0].id);
@@ -970,6 +1022,9 @@ const updateExerciseLogSchema = z.object({
   sets: z.number().int().positive().nullable().optional(),
   reps: z.number().int().positive().nullable().optional(),
   weightLb: z.number().positive().nullable().optional(),
+  durationMin: z.number().positive().nullable().optional(),
+  distanceMi: z.number().positive().nullable().optional(),
+  kcalMachine: z.number().int().nonnegative().nullable().optional(),
   notes: z.string().nullable().optional(),
 });
 
@@ -987,6 +1042,9 @@ export async function updateExerciseLog(
   if ('sets' in data) push('sets', data.sets ?? null);
   if ('reps' in data) push('reps', data.reps ?? null);
   if ('weightLb' in data) push('weight_lb', data.weightLb ?? null);
+  if ('durationMin' in data) push('duration_min', data.durationMin ?? null);
+  if ('distanceMi' in data) push('distance_mi', data.distanceMi ?? null);
+  if ('kcalMachine' in data) push('kcal_machine', data.kcalMachine ?? null);
   if ('notes' in data) push('notes', data.notes ?? null);
   if (sets.length > 0) {
     args.push(data.id);
