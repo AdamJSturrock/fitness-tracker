@@ -4,14 +4,20 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { getDb } from '@/lib/db';
 import {
+  getExerciseLogById,
   getMealItemWithFoodById,
   getProfile,
 } from '@/server/queries';
 import type {
   Entry,
+  Exercise,
+  ExerciseLog,
+  ExerciseLogWithExercise,
   Food,
   MealItemWithFood,
   Profile,
+  Routine,
+  RoutineExercise,
   UserName,
 } from '@/lib/types';
 
@@ -442,3 +448,612 @@ export async function removeMealItem(id: number): Promise<void> {
     revalidateMealPaths(name);
   }
 }
+
+// ============================================================
+// Phase 1: workouts (exercises, routines, exercise_logs)
+// ============================================================
+
+const exerciseCategoryEnum = z.enum(['strength', 'bodyweight']);
+const scheduleDaysSchema = z
+  .array(z.number().int().min(1).max(7))
+  .max(7)
+  .transform((arr) => Array.from(new Set(arr)).sort((a, b) => a - b));
+
+function revalidateWorkoutPathsForUser(name: UserName) {
+  revalidatePath(`/${name}/today`);
+  revalidatePath(`/${name}/routines`);
+  revalidatePath(`/${name}/dashboard`); // streak shows here
+}
+
+function revalidateExerciseLibrary() {
+  // Exercise library is shared.
+  revalidatePath('/adam/today');
+  revalidatePath('/anna/today');
+  revalidatePath('/adam/routines');
+  revalidatePath('/anna/routines');
+}
+
+// ---------- exercises (shared library) ----------
+
+const createExerciseSchema = z.object({
+  name: z.string().min(1),
+  category: exerciseCategoryEnum,
+});
+
+export async function createExercise(input: unknown): Promise<Exercise> {
+  const data = parseOrThrow(createExerciseSchema, input, 'createExercise');
+  const db = getDb();
+  const result = await db.execute({
+    sql: `INSERT INTO exercises (name, category)
+          VALUES (?, ?)
+          RETURNING id, name, category, archived, created_at`,
+    args: [data.name, data.category],
+  });
+  const row = result.rows[0];
+  if (!row) throw new Error('createExercise: insert did not return a row');
+  const ex: Exercise = {
+    id: Number(row.id),
+    name: String(row.name),
+    category: data.category,
+    archived: Number(row.archived) !== 0,
+    createdAt: String(row.created_at),
+  };
+  revalidateExerciseLibrary();
+  return ex;
+}
+
+const updateExerciseSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string().min(1).optional(),
+  category: exerciseCategoryEnum.optional(),
+});
+
+export async function updateExercise(input: unknown): Promise<Exercise> {
+  const data = parseOrThrow(updateExerciseSchema, input, 'updateExercise');
+  const db = getDb();
+  const sets: string[] = [];
+  const args: (string | number)[] = [];
+  if (data.name !== undefined) {
+    sets.push('name = ?');
+    args.push(data.name);
+  }
+  if (data.category !== undefined) {
+    sets.push('category = ?');
+    args.push(data.category);
+  }
+  if (sets.length > 0) {
+    args.push(data.id);
+    await db.execute({
+      sql: `UPDATE exercises SET ${sets.join(', ')} WHERE id = ?`,
+      args,
+    });
+  }
+  const r = await db.execute({
+    sql: 'SELECT id, name, category, archived, created_at FROM exercises WHERE id = ?',
+    args: [data.id],
+  });
+  const row = r.rows[0];
+  if (!row) throw new Error(`updateExercise: id=${data.id} not found`);
+  const cat = String(row.category);
+  const ex: Exercise = {
+    id: Number(row.id),
+    name: String(row.name),
+    category: cat === 'bodyweight' ? 'bodyweight' : 'strength',
+    archived: Number(row.archived) !== 0,
+    createdAt: String(row.created_at),
+  };
+  revalidateExerciseLibrary();
+  return ex;
+}
+
+export async function archiveExercise(id: number): Promise<void> {
+  const parsed = parseOrThrow(z.number().int().positive(), id, 'archiveExercise');
+  const db = getDb();
+  await db.execute({
+    sql: 'UPDATE exercises SET archived = 1 WHERE id = ?',
+    args: [parsed],
+  });
+  revalidateExerciseLibrary();
+}
+
+export async function unarchiveExercise(id: number): Promise<void> {
+  const parsed = parseOrThrow(
+    z.number().int().positive(),
+    id,
+    'unarchiveExercise',
+  );
+  const db = getDb();
+  await db.execute({
+    sql: 'UPDATE exercises SET archived = 0 WHERE id = ?',
+    args: [parsed],
+  });
+  revalidateExerciseLibrary();
+}
+
+// ---------- routines (per user) ----------
+
+const createRoutineSchema = z.object({
+  userId: z.number().int().positive(),
+  name: z.string().min(1),
+  scheduleDays: scheduleDaysSchema,
+});
+
+export async function createRoutine(input: unknown): Promise<Routine> {
+  const data = parseOrThrow(createRoutineSchema, input, 'createRoutine');
+  const db = getDb();
+  const days = data.scheduleDays.join(',');
+  const result = await db.execute({
+    sql: `INSERT INTO routines (user_id, name, schedule_days)
+          VALUES (?, ?, ?)
+          RETURNING id, user_id, name, schedule_days, archived, created_at`,
+    args: [data.userId, data.name, days],
+  });
+  const row = result.rows[0];
+  if (!row) throw new Error('createRoutine: insert did not return a row');
+  const routine: Routine = {
+    id: Number(row.id),
+    userId: Number(row.user_id),
+    name: String(row.name),
+    scheduleDays: data.scheduleDays,
+    archived: Number(row.archived) !== 0,
+    createdAt: String(row.created_at),
+  };
+  const name = await userNameById(data.userId);
+  revalidateWorkoutPathsForUser(name);
+  return routine;
+}
+
+const updateRoutineSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string().min(1).optional(),
+  scheduleDays: scheduleDaysSchema.optional(),
+});
+
+export async function updateRoutine(input: unknown): Promise<Routine> {
+  const data = parseOrThrow(updateRoutineSchema, input, 'updateRoutine');
+  const db = getDb();
+  const sets: string[] = [];
+  const args: (string | number)[] = [];
+  if (data.name !== undefined) {
+    sets.push('name = ?');
+    args.push(data.name);
+  }
+  if (data.scheduleDays !== undefined) {
+    sets.push('schedule_days = ?');
+    args.push(data.scheduleDays.join(','));
+  }
+  if (sets.length > 0) {
+    args.push(data.id);
+    await db.execute({
+      sql: `UPDATE routines SET ${sets.join(', ')} WHERE id = ?`,
+      args,
+    });
+  }
+  const r = await db.execute({
+    sql: `SELECT id, user_id, name, schedule_days, archived, created_at
+            FROM routines WHERE id = ?`,
+    args: [data.id],
+  });
+  const row = r.rows[0];
+  if (!row) throw new Error(`updateRoutine: id=${data.id} not found`);
+  const days = String(row.schedule_days ?? '')
+    .split(',')
+    .map((p) => Number.parseInt(p.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n >= 1 && n <= 7);
+  const routine: Routine = {
+    id: Number(row.id),
+    userId: Number(row.user_id),
+    name: String(row.name),
+    scheduleDays: days,
+    archived: Number(row.archived) !== 0,
+    createdAt: String(row.created_at),
+  };
+  const name = await userNameById(routine.userId);
+  revalidateWorkoutPathsForUser(name);
+  return routine;
+}
+
+export async function archiveRoutine(id: number): Promise<void> {
+  const parsed = parseOrThrow(z.number().int().positive(), id, 'archiveRoutine');
+  const db = getDb();
+  const lookup = await db.execute({
+    sql: 'SELECT user_id FROM routines WHERE id = ? LIMIT 1',
+    args: [parsed],
+  });
+  await db.execute({
+    sql: 'UPDATE routines SET archived = 1 WHERE id = ?',
+    args: [parsed],
+  });
+  if (lookup.rows[0]) {
+    const name = await userNameById(Number(lookup.rows[0].user_id));
+    revalidateWorkoutPathsForUser(name);
+  }
+}
+
+export async function unarchiveRoutine(id: number): Promise<void> {
+  const parsed = parseOrThrow(
+    z.number().int().positive(),
+    id,
+    'unarchiveRoutine',
+  );
+  const db = getDb();
+  const lookup = await db.execute({
+    sql: 'SELECT user_id FROM routines WHERE id = ? LIMIT 1',
+    args: [parsed],
+  });
+  await db.execute({
+    sql: 'UPDATE routines SET archived = 0 WHERE id = ?',
+    args: [parsed],
+  });
+  if (lookup.rows[0]) {
+    const name = await userNameById(Number(lookup.rows[0].user_id));
+    revalidateWorkoutPathsForUser(name);
+  }
+}
+
+// ---------- routine_exercises ----------
+
+const addExerciseToRoutineSchema = z.object({
+  routineId: z.number().int().positive(),
+  exerciseId: z.number().int().positive(),
+  targetSets: z.number().int().positive().nullable().optional(),
+  targetReps: z.number().int().positive().nullable().optional(),
+  targetWeightLb: z.number().positive().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+async function userIdForRoutine(routineId: number): Promise<number> {
+  const db = getDb();
+  const r = await db.execute({
+    sql: 'SELECT user_id FROM routines WHERE id = ? LIMIT 1',
+    args: [routineId],
+  });
+  const row = r.rows[0];
+  if (!row) throw new Error(`Routine id=${routineId} not found`);
+  return Number(row.user_id);
+}
+
+export async function addExerciseToRoutine(
+  input: unknown,
+): Promise<RoutineExercise> {
+  const data = parseOrThrow(
+    addExerciseToRoutineSchema,
+    input,
+    'addExerciseToRoutine',
+  );
+  const db = getDb();
+  // Auto-position: max(position) + 1 within this routine.
+  const posR = await db.execute({
+    sql: 'SELECT COALESCE(MAX(position), 0) + 1 AS next FROM routine_exercises WHERE routine_id = ?',
+    args: [data.routineId],
+  });
+  const position = Number(posR.rows[0]?.next ?? 1);
+  const result = await db.execute({
+    sql: `INSERT INTO routine_exercises
+            (routine_id, exercise_id, position,
+             target_sets, target_reps, target_weight_lb, notes)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          RETURNING id, routine_id, exercise_id, position,
+                    target_sets, target_reps, target_weight_lb, notes`,
+    args: [
+      data.routineId,
+      data.exerciseId,
+      position,
+      data.targetSets ?? null,
+      data.targetReps ?? null,
+      data.targetWeightLb ?? null,
+      data.notes ?? null,
+    ],
+  });
+  const row = result.rows[0];
+  if (!row) throw new Error('addExerciseToRoutine: insert did not return');
+  const re: RoutineExercise = {
+    id: Number(row.id),
+    routineId: Number(row.routine_id),
+    exerciseId: Number(row.exercise_id),
+    position: Number(row.position),
+    targetSets:
+      row.target_sets === null || row.target_sets === undefined
+        ? null
+        : Number(row.target_sets),
+    targetReps:
+      row.target_reps === null || row.target_reps === undefined
+        ? null
+        : Number(row.target_reps),
+    targetWeightLb:
+      row.target_weight_lb === null || row.target_weight_lb === undefined
+        ? null
+        : Number(row.target_weight_lb),
+    notes:
+      row.notes === null || row.notes === undefined ? null : String(row.notes),
+  };
+  const userId = await userIdForRoutine(data.routineId);
+  const name = await userNameById(userId);
+  revalidateWorkoutPathsForUser(name);
+  return re;
+}
+
+const updateRoutineExerciseSchema = z.object({
+  id: z.number().int().positive(),
+  position: z.number().int().nonnegative().optional(),
+  targetSets: z.number().int().positive().nullable().optional(),
+  targetReps: z.number().int().positive().nullable().optional(),
+  targetWeightLb: z.number().positive().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+export async function updateRoutineExercise(
+  input: unknown,
+): Promise<RoutineExercise> {
+  const data = parseOrThrow(
+    updateRoutineExerciseSchema,
+    input,
+    'updateRoutineExercise',
+  );
+  const db = getDb();
+  const sets: string[] = [];
+  const args: (string | number | null)[] = [];
+  const push = (col: string, value: unknown) => {
+    sets.push(`${col} = ?`);
+    args.push(value as string | number | null);
+  };
+  if (data.position !== undefined) push('position', data.position);
+  if ('targetSets' in data) push('target_sets', data.targetSets ?? null);
+  if ('targetReps' in data) push('target_reps', data.targetReps ?? null);
+  if ('targetWeightLb' in data)
+    push('target_weight_lb', data.targetWeightLb ?? null);
+  if ('notes' in data) push('notes', data.notes ?? null);
+  if (sets.length > 0) {
+    args.push(data.id);
+    await db.execute({
+      sql: `UPDATE routine_exercises SET ${sets.join(', ')} WHERE id = ?`,
+      args,
+    });
+  }
+  const r = await db.execute({
+    sql: `SELECT id, routine_id, exercise_id, position,
+                 target_sets, target_reps, target_weight_lb, notes
+            FROM routine_exercises WHERE id = ?`,
+    args: [data.id],
+  });
+  const row = r.rows[0];
+  if (!row) throw new Error(`updateRoutineExercise: id=${data.id} not found`);
+  const re: RoutineExercise = {
+    id: Number(row.id),
+    routineId: Number(row.routine_id),
+    exerciseId: Number(row.exercise_id),
+    position: Number(row.position),
+    targetSets:
+      row.target_sets === null || row.target_sets === undefined
+        ? null
+        : Number(row.target_sets),
+    targetReps:
+      row.target_reps === null || row.target_reps === undefined
+        ? null
+        : Number(row.target_reps),
+    targetWeightLb:
+      row.target_weight_lb === null || row.target_weight_lb === undefined
+        ? null
+        : Number(row.target_weight_lb),
+    notes:
+      row.notes === null || row.notes === undefined ? null : String(row.notes),
+  };
+  const userId = await userIdForRoutine(re.routineId);
+  const name = await userNameById(userId);
+  revalidateWorkoutPathsForUser(name);
+  return re;
+}
+
+export async function removeRoutineExercise(id: number): Promise<void> {
+  const parsed = parseOrThrow(
+    z.number().int().positive(),
+    id,
+    'removeRoutineExercise',
+  );
+  const db = getDb();
+  const lookup = await db.execute({
+    sql: 'SELECT routine_id FROM routine_exercises WHERE id = ?',
+    args: [parsed],
+  });
+  await db.execute({
+    sql: 'DELETE FROM routine_exercises WHERE id = ?',
+    args: [parsed],
+  });
+  if (lookup.rows[0]) {
+    const userId = await userIdForRoutine(Number(lookup.rows[0].routine_id));
+    const name = await userNameById(userId);
+    revalidateWorkoutPathsForUser(name);
+  }
+}
+
+// ---------- exercise_logs (tick-off + ad-hoc) ----------
+
+const tickRoutineExerciseSchema = z.object({
+  userId: z.number().int().positive(),
+  date: dateString,
+  routineExerciseId: z.number().int().positive(),
+});
+
+export async function tickRoutineExercise(
+  input: unknown,
+): Promise<ExerciseLogWithExercise> {
+  const data = parseOrThrow(
+    tickRoutineExerciseSchema,
+    input,
+    'tickRoutineExercise',
+  );
+  const db = getDb();
+  const reR = await db.execute({
+    sql: `SELECT routine_id, exercise_id,
+                 target_sets, target_reps, target_weight_lb
+            FROM routine_exercises WHERE id = ? LIMIT 1`,
+    args: [data.routineExerciseId],
+  });
+  const re = reR.rows[0];
+  if (!re) {
+    throw new Error(
+      `tickRoutineExercise: routine_exercise id=${data.routineExerciseId} not found`,
+    );
+  }
+  const routineId = Number(re.routine_id);
+  const exerciseId = Number(re.exercise_id);
+
+  // Idempotent: if already logged for (user, date, exercise, routine), reuse it.
+  const existing = await db.execute({
+    sql: `SELECT id FROM exercise_logs
+           WHERE user_id = ? AND date = ?
+             AND exercise_id = ? AND routine_id = ?
+           LIMIT 1`,
+    args: [data.userId, data.date, exerciseId, routineId],
+  });
+  let logId: number;
+  if (existing.rows[0]) {
+    logId = Number(existing.rows[0].id);
+  } else {
+    const ins = await db.execute({
+      sql: `INSERT INTO exercise_logs
+              (user_id, date, exercise_id, routine_id,
+               sets, reps, weight_lb)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            RETURNING id`,
+      args: [
+        data.userId,
+        data.date,
+        exerciseId,
+        routineId,
+        re.target_sets ?? null,
+        re.target_reps ?? null,
+        re.target_weight_lb ?? null,
+      ],
+    });
+    logId = Number(ins.rows[0].id);
+  }
+  const log = await getExerciseLogById(logId);
+  const name = await userNameById(data.userId);
+  revalidateWorkoutPathsForUser(name);
+  return log;
+}
+
+const untickRoutineExerciseSchema = z.object({
+  userId: z.number().int().positive(),
+  date: dateString,
+  routineExerciseId: z.number().int().positive(),
+});
+
+export async function untickRoutineExercise(input: unknown): Promise<void> {
+  const data = parseOrThrow(
+    untickRoutineExerciseSchema,
+    input,
+    'untickRoutineExercise',
+  );
+  const db = getDb();
+  const reR = await db.execute({
+    sql: 'SELECT routine_id, exercise_id FROM routine_exercises WHERE id = ?',
+    args: [data.routineExerciseId],
+  });
+  const re = reR.rows[0];
+  if (!re) return;
+  await db.execute({
+    sql: `DELETE FROM exercise_logs
+           WHERE user_id = ? AND date = ?
+             AND exercise_id = ? AND routine_id = ?`,
+    args: [data.userId, data.date, Number(re.exercise_id), Number(re.routine_id)],
+  });
+  const name = await userNameById(data.userId);
+  revalidateWorkoutPathsForUser(name);
+}
+
+const updateExerciseLogSchema = z.object({
+  id: z.number().int().positive(),
+  sets: z.number().int().positive().nullable().optional(),
+  reps: z.number().int().positive().nullable().optional(),
+  weightLb: z.number().positive().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+export async function updateExerciseLog(
+  input: unknown,
+): Promise<ExerciseLog> {
+  const data = parseOrThrow(updateExerciseLogSchema, input, 'updateExerciseLog');
+  const db = getDb();
+  const sets: string[] = [];
+  const args: (string | number | null)[] = [];
+  const push = (col: string, value: unknown) => {
+    sets.push(`${col} = ?`);
+    args.push(value as string | number | null);
+  };
+  if ('sets' in data) push('sets', data.sets ?? null);
+  if ('reps' in data) push('reps', data.reps ?? null);
+  if ('weightLb' in data) push('weight_lb', data.weightLb ?? null);
+  if ('notes' in data) push('notes', data.notes ?? null);
+  if (sets.length > 0) {
+    args.push(data.id);
+    await db.execute({
+      sql: `UPDATE exercise_logs SET ${sets.join(', ')} WHERE id = ?`,
+      args,
+    });
+  }
+  const log = await getExerciseLogById(data.id);
+  const name = await userNameById(log.userId);
+  revalidateWorkoutPathsForUser(name);
+  return log;
+}
+
+const logExerciseSchema = z.object({
+  userId: z.number().int().positive(),
+  date: dateString,
+  exerciseId: z.number().int().positive(),
+  sets: z.number().int().positive().nullable().optional(),
+  reps: z.number().int().positive().nullable().optional(),
+  weightLb: z.number().positive().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+export async function logExercise(
+  input: unknown,
+): Promise<ExerciseLogWithExercise> {
+  const data = parseOrThrow(logExerciseSchema, input, 'logExercise');
+  const db = getDb();
+  const ins = await db.execute({
+    sql: `INSERT INTO exercise_logs
+            (user_id, date, exercise_id, routine_id,
+             sets, reps, weight_lb, notes)
+          VALUES (?, ?, ?, NULL, ?, ?, ?, ?)
+          RETURNING id`,
+    args: [
+      data.userId,
+      data.date,
+      data.exerciseId,
+      data.sets ?? null,
+      data.reps ?? null,
+      data.weightLb ?? null,
+      data.notes ?? null,
+    ],
+  });
+  const log = await getExerciseLogById(Number(ins.rows[0].id));
+  const name = await userNameById(data.userId);
+  revalidateWorkoutPathsForUser(name);
+  return log;
+}
+
+export async function removeExerciseLog(id: number): Promise<void> {
+  const parsed = parseOrThrow(
+    z.number().int().positive(),
+    id,
+    'removeExerciseLog',
+  );
+  const db = getDb();
+  const lookup = await db.execute({
+    sql: 'SELECT user_id FROM exercise_logs WHERE id = ?',
+    args: [parsed],
+  });
+  await db.execute({
+    sql: 'DELETE FROM exercise_logs WHERE id = ?',
+    args: [parsed],
+  });
+  if (lookup.rows[0]) {
+    const name = await userNameById(Number(lookup.rows[0].user_id));
+    revalidateWorkoutPathsForUser(name);
+  }
+}
+

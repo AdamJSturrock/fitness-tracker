@@ -5,7 +5,10 @@ import {
   getMealsForDate,
   getProfile,
   getRecentlyUsedFoods,
+  getStreak,
+  getTodayRoutineRows,
   listFoods,
+  listRoutines,
 } from '@/server/queries';
 import { todayIso } from '@/lib/dateUtils';
 import TodayClient from './today-client';
@@ -24,12 +27,16 @@ export default async function TodayPage({
   const profile = await getProfile(name);
   const date = todayIso();
 
-  const [meals, foods, recentFoods, entries] = await Promise.all([
-    getMealsForDate(profile.id, date),
-    listFoods({ includeArchived: false }),
-    getRecentlyUsedFoods(profile.id, 8),
-    getEntries(profile.id, date),
-  ]);
+  const [meals, foods, recentFoods, entries, todayRoutine, streak, allRoutines] =
+    await Promise.all([
+      getMealsForDate(profile.id, date),
+      listFoods({ includeArchived: false }),
+      getRecentlyUsedFoods(profile.id, 8),
+      getEntries(profile.id, date),
+      getTodayRoutineRows(profile.id, date),
+      getStreak(profile.id, date),
+      listRoutines(profile.id),
+    ]);
 
   const todaysEntry = entries.find((e) => e.date === date) ?? null;
 
@@ -44,6 +51,7 @@ export default async function TodayPage({
 
       <TodayClient
         userId={profile.id}
+        userSegment={name}
         date={date}
         meals={meals}
         foods={foods}
@@ -51,6 +59,10 @@ export default async function TodayPage({
         dailyCalorieTarget={profile.dailyCalorieTarget}
         initialWeightLb={todaysEntry?.weightLb ?? null}
         initialSteps={todaysEntry?.steps ?? null}
+        routine={todayRoutine.routine}
+        routineRows={todayRoutine.rows}
+        streak={streak}
+        hasAnyRoutine={allRoutines.length > 0}
       />
     </div>
   );

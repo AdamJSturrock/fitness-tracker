@@ -7,6 +7,7 @@ import type { UserName } from '@/lib/types';
 const TABS = [
   { slug: 'dashboard', label: 'Dashboard' },
   { slug: 'today', label: 'Today' },
+  { slug: 'routines', label: 'Routines' },
   { slug: 'foods', label: 'Foods' },
   { slug: 'profile', label: 'Profile' },
 ] as const;
@@ -24,7 +25,7 @@ export default function NavTabs() {
       aria-label="Sections"
       className="mx-auto max-w-3xl px-2 pb-2 sm:px-4"
     >
-      <ul className="grid grid-cols-4 gap-1">
+      <ul className="grid grid-cols-5 gap-1">
         {TABS.map((t) => {
           const href = `/${user}/${t.slug}`;
           const active = pathname.startsWith(href);
@@ -34,7 +35,7 @@ export default function NavTabs() {
                 href={href}
                 aria-current={active ? 'page' : undefined}
                 className={
-                  'flex h-11 items-center justify-center rounded-md text-center text-sm font-medium transition ' +
+                  'flex h-11 items-center justify-center rounded-md px-1 text-center text-xs font-medium transition sm:text-sm ' +
                   (active
                     ? 'bg-emerald-600 text-white shadow-sm'
                     : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200')

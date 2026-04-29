@@ -4,10 +4,19 @@ import { getDb } from '@/lib/db';
 import type {
   DayCalorieTotal,
   Entry,
+  Exercise,
+  ExerciseCategory,
+  ExerciseLog,
+  ExerciseLogWithExercise,
   Food,
   MealItem,
   MealItemWithFood,
   Profile,
+  Routine,
+  RoutineExercise,
+  RoutineExerciseWithExercise,
+  RoutineWithExercises,
+  TodayRoutineRow,
   UserName,
 } from '@/lib/types';
 
@@ -313,3 +322,331 @@ export async function getMealItemWithFoodById(
 
 // Internal helper used elsewhere if needed.
 export { rowToMealItem };
+
+// ---- Phase 1: workouts ----
+
+function parseScheduleDays(raw: unknown): number[] {
+  const s = raw === null || raw === undefined ? '' : String(raw);
+  if (s.trim() === '') return [];
+  return s
+    .split(',')
+    .map((p) => Number.parseInt(p.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n >= 1 && n <= 7)
+    .sort((a, b) => a - b);
+}
+
+function rowToExercise(r: Row): Exercise {
+  const cat = String(r.category);
+  const category: ExerciseCategory =
+    cat === 'strength' || cat === 'bodyweight' ? cat : 'strength';
+  return {
+    id: Number(r.id),
+    name: String(r.name),
+    category,
+    archived: Number(r.archived) !== 0,
+    createdAt: String(r.created_at),
+  };
+}
+
+function rowToExerciseAliased(r: Row, prefix: string): Exercise {
+  const cat = String(r[`${prefix}category`]);
+  const category: ExerciseCategory =
+    cat === 'strength' || cat === 'bodyweight' ? cat : 'strength';
+  return {
+    id: Number(r[`${prefix}id`]),
+    name: String(r[`${prefix}name`]),
+    category,
+    archived: Number(r[`${prefix}archived`]) !== 0,
+    createdAt: String(r[`${prefix}created_at`]),
+  };
+}
+
+function rowToRoutine(r: Row): Routine {
+  return {
+    id: Number(r.id),
+    userId: Number(r.user_id),
+    name: String(r.name),
+    scheduleDays: parseScheduleDays(r.schedule_days),
+    archived: Number(r.archived) !== 0,
+    createdAt: String(r.created_at),
+  };
+}
+
+function rowToRoutineExercise(r: Row): RoutineExercise {
+  return {
+    id: Number(r.id),
+    routineId: Number(r.routine_id),
+    exerciseId: Number(r.exercise_id),
+    position: Number(r.position),
+    targetSets: toIntOrNull(r.target_sets),
+    targetReps: toIntOrNull(r.target_reps),
+    targetWeightLb: toNumOrNull(r.target_weight_lb),
+    notes: toStringOrNull(r.notes),
+  };
+}
+
+function rowToExerciseLog(r: Row): ExerciseLog {
+  return {
+    id: Number(r.id),
+    userId: Number(r.user_id),
+    date: String(r.date),
+    exerciseId: Number(r.exercise_id),
+    routineId:
+      r.routine_id === null || r.routine_id === undefined
+        ? null
+        : Number(r.routine_id),
+    sets: toIntOrNull(r.sets),
+    reps: toIntOrNull(r.reps),
+    weightLb: toNumOrNull(r.weight_lb),
+    notes: toStringOrNull(r.notes),
+    createdAt: String(r.created_at),
+  };
+}
+
+const EX_JOIN_COLUMNS = `
+  exercises.id         AS ex_id,
+  exercises.name       AS ex_name,
+  exercises.category   AS ex_category,
+  exercises.archived   AS ex_archived,
+  exercises.created_at AS ex_created_at
+`;
+
+export async function listExercises(opts?: {
+  search?: string;
+  includeArchived?: boolean;
+}): Promise<Exercise[]> {
+  const db = getDb();
+  const search = opts?.search?.trim() ?? '';
+  const includeArchived = opts?.includeArchived ?? false;
+  const where: string[] = [];
+  const args: (string | number)[] = [];
+  if (!includeArchived) where.push('archived = 0');
+  if (search.length > 0) {
+    where.push('LOWER(name) LIKE ?');
+    args.push(`%${search.toLowerCase()}%`);
+  }
+  const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+  const result = await db.execute({
+    sql: `SELECT id, name, category, archived, created_at
+            FROM exercises
+            ${whereSql}
+           ORDER BY name COLLATE NOCASE ASC, id ASC`,
+    args,
+  });
+  return result.rows.map(rowToExercise);
+}
+
+export async function listRoutines(
+  userId: number,
+  opts?: { includeArchived?: boolean },
+): Promise<Routine[]> {
+  const db = getDb();
+  const includeArchived = opts?.includeArchived ?? false;
+  const result = await db.execute({
+    sql: `SELECT id, user_id, name, schedule_days, archived, created_at
+            FROM routines
+           WHERE user_id = ?${includeArchived ? '' : ' AND archived = 0'}
+           ORDER BY name COLLATE NOCASE ASC, id ASC`,
+    args: [userId],
+  });
+  return result.rows.map(rowToRoutine);
+}
+
+export async function getRoutineWithExercises(
+  routineId: number,
+): Promise<RoutineWithExercises> {
+  const db = getDb();
+  const r = await db.execute({
+    sql: `SELECT id, user_id, name, schedule_days, archived, created_at
+            FROM routines WHERE id = ? LIMIT 1`,
+    args: [routineId],
+  });
+  const head = r.rows[0];
+  if (!head) throw new Error(`Routine id=${routineId} not found`);
+  const routine = rowToRoutine(head);
+
+  const ex = await db.execute({
+    sql: `SELECT routine_exercises.id, routine_exercises.routine_id,
+                 routine_exercises.exercise_id, routine_exercises.position,
+                 routine_exercises.target_sets, routine_exercises.target_reps,
+                 routine_exercises.target_weight_lb, routine_exercises.notes,
+                 ${EX_JOIN_COLUMNS}
+            FROM routine_exercises
+            JOIN exercises ON exercises.id = routine_exercises.exercise_id
+           WHERE routine_exercises.routine_id = ?
+           ORDER BY routine_exercises.position ASC, routine_exercises.id ASC`,
+    args: [routineId],
+  });
+  const exercises: RoutineExerciseWithExercise[] = ex.rows.map((row) => ({
+    ...rowToRoutineExercise(row),
+    exercise: rowToExerciseAliased(row, 'ex_'),
+  }));
+  return { ...routine, exercises };
+}
+
+/** ISO weekday: Mon=1 … Sun=7 from a YYYY-MM-DD local date. */
+function isoWeekdayFromIso(iso: string): number {
+  const [y, m, d] = iso.split('-').map(Number);
+  // Use UTC to avoid TZ surprises; date strings are TZ-agnostic anyway.
+  const day = new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1)).getUTCDay();
+  return day === 0 ? 7 : day; // JS getUTCDay: Sun=0..Sat=6 → ISO Mon=1..Sun=7
+}
+
+/**
+ * Returns the first non-archived routine scheduled for the date's day-of-week,
+ * or null if none. Picks lowest id when multiple match.
+ */
+export async function getRoutineForDate(
+  userId: number,
+  date: string,
+): Promise<RoutineWithExercises | null> {
+  const dow = isoWeekdayFromIso(date);
+  const routines = await listRoutines(userId);
+  const match = routines.find((r) => r.scheduleDays.includes(dow));
+  if (!match) return null;
+  return getRoutineWithExercises(match.id);
+}
+
+export async function getExerciseLogsForDate(
+  userId: number,
+  date: string,
+): Promise<ExerciseLogWithExercise[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT exercise_logs.id, exercise_logs.user_id, exercise_logs.date,
+                 exercise_logs.exercise_id, exercise_logs.routine_id,
+                 exercise_logs.sets, exercise_logs.reps, exercise_logs.weight_lb,
+                 exercise_logs.notes, exercise_logs.created_at,
+                 ${EX_JOIN_COLUMNS}
+            FROM exercise_logs
+            JOIN exercises ON exercises.id = exercise_logs.exercise_id
+           WHERE exercise_logs.user_id = ? AND exercise_logs.date = ?
+           ORDER BY exercise_logs.created_at ASC, exercise_logs.id ASC`,
+    args: [userId, date],
+  });
+  return result.rows.map((r) => ({
+    ...rowToExerciseLog(r),
+    exercise: rowToExerciseAliased(r, 'ex_'),
+  }));
+}
+
+export async function getTodayRoutineRows(
+  userId: number,
+  date: string,
+): Promise<{
+  routine: RoutineWithExercises | null;
+  rows: TodayRoutineRow[];
+  adHocLogs: ExerciseLogWithExercise[];
+}> {
+  const routine = await getRoutineForDate(userId, date);
+  const allLogs = await getExerciseLogsForDate(userId, date);
+  if (!routine) {
+    return { routine: null, rows: [], adHocLogs: allLogs };
+  }
+  const logsByExerciseAndRoutine = new Map<string, ExerciseLog>();
+  const usedLogIds = new Set<number>();
+  for (const log of allLogs) {
+    const key = `${log.exerciseId}::${log.routineId ?? 'null'}`;
+    logsByExerciseAndRoutine.set(key, log);
+  }
+  const rows: TodayRoutineRow[] = routine.exercises.map((re) => {
+    const key = `${re.exerciseId}::${routine.id}`;
+    const log = logsByExerciseAndRoutine.get(key) ?? null;
+    if (log) usedLogIds.add(log.id);
+    return { routineExercise: re, log };
+  });
+  const adHocLogs = allLogs.filter((l) => !usedLogIds.has(l.id));
+  return { routine, rows, adHocLogs };
+}
+
+/**
+ * Streak in scheduled-routine days. Walks back from yesterday and counts
+ * consecutive days where:
+ *   - that day-of-week has a non-archived scheduled routine for this user, AND
+ *   - at least one exercise_log exists for (user, date, routine_id = scheduled
+ *     routine id).
+ * Days with no scheduled routine are skipped (don't break the streak).
+ * Today is NOT included in the count, so an in-progress today doesn't reset it.
+ */
+export async function getStreak(
+  userId: number,
+  todayIso: string,
+): Promise<number> {
+  const routines = await listRoutines(userId);
+  if (routines.length === 0) return 0;
+
+  // routine for each ISO weekday (1..7), or null.
+  const routineByDow = new Map<number, Routine>();
+  for (const r of routines) {
+    for (const d of r.scheduleDays) {
+      if (!routineByDow.has(d)) routineByDow.set(d, r);
+    }
+  }
+  if (routineByDow.size === 0) return 0;
+
+  const db = getDb();
+  // Look back at most 90 scheduled days.
+  const HORIZON_DAYS = 365;
+  const earliestAllowed = new Date(todayIso + 'T00:00:00Z');
+  earliestAllowed.setUTCDate(earliestAllowed.getUTCDate() - HORIZON_DAYS);
+  const earliestIso = earliestAllowed.toISOString().slice(0, 10);
+
+  const rows = await db.execute({
+    sql: `SELECT date, routine_id
+            FROM exercise_logs
+           WHERE user_id = ? AND date < ? AND date >= ?
+           GROUP BY date, routine_id`,
+    args: [userId, todayIso, earliestIso],
+  });
+  const loggedRoutineIdsByDate = new Map<string, Set<number>>();
+  for (const r of rows.rows) {
+    const date = String(r.date);
+    const rid = r.routine_id === null ? null : Number(r.routine_id);
+    if (rid === null) continue;
+    const set = loggedRoutineIdsByDate.get(date) ?? new Set<number>();
+    set.add(rid);
+    loggedRoutineIdsByDate.set(date, set);
+  }
+
+  // Walk back day-by-day from yesterday.
+  let streak = 0;
+  const cursor = new Date(todayIso + 'T00:00:00Z');
+  cursor.setUTCDate(cursor.getUTCDate() - 1);
+  for (let i = 0; i < HORIZON_DAYS; i++) {
+    const iso = cursor.toISOString().slice(0, 10);
+    const dow = isoWeekdayFromIso(iso);
+    const scheduled = routineByDow.get(dow);
+    if (!scheduled) {
+      // rest day — skip
+      cursor.setUTCDate(cursor.getUTCDate() - 1);
+      continue;
+    }
+    const completed =
+      loggedRoutineIdsByDate.get(iso)?.has(scheduled.id) ?? false;
+    if (!completed) break;
+    streak++;
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  return streak;
+}
+
+export async function getExerciseLogById(
+  id: number,
+): Promise<ExerciseLogWithExercise> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT exercise_logs.id, exercise_logs.user_id, exercise_logs.date,
+                 exercise_logs.exercise_id, exercise_logs.routine_id,
+                 exercise_logs.sets, exercise_logs.reps, exercise_logs.weight_lb,
+                 exercise_logs.notes, exercise_logs.created_at,
+                 ${EX_JOIN_COLUMNS}
+            FROM exercise_logs
+            JOIN exercises ON exercises.id = exercise_logs.exercise_id
+           WHERE exercise_logs.id = ?
+           LIMIT 1`,
+    args: [id],
+  });
+  const r = result.rows[0];
+  if (!r) throw new Error(`ExerciseLog id=${id} not found`);
+  return { ...rowToExerciseLog(r), exercise: rowToExerciseAliased(r, 'ex_') };
+}

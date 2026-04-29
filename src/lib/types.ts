@@ -58,3 +58,67 @@ export interface DayCalorieTotal {
   date: string;
   calories: number;
 }
+
+// ---- Phase 1: workouts ----
+
+export type ExerciseCategory = 'strength' | 'bodyweight';
+
+export interface Exercise {
+  id: number;
+  name: string;
+  category: ExerciseCategory;
+  archived: boolean;
+  createdAt: string;
+}
+
+/** Day numbers are ISO weekday: Mon=1 … Sun=7. */
+export interface Routine {
+  id: number;
+  userId: number;
+  name: string;
+  scheduleDays: number[];
+  archived: boolean;
+  createdAt: string;
+}
+
+export interface RoutineExercise {
+  id: number;
+  routineId: number;
+  exerciseId: number;
+  position: number;
+  targetSets: number | null;
+  targetReps: number | null;
+  targetWeightLb: number | null;
+  notes: string | null;
+}
+
+export interface RoutineExerciseWithExercise extends RoutineExercise {
+  exercise: Exercise;
+}
+
+export interface RoutineWithExercises extends Routine {
+  exercises: RoutineExerciseWithExercise[];
+}
+
+export interface ExerciseLog {
+  id: number;
+  userId: number;
+  date: string; // YYYY-MM-DD
+  exerciseId: number;
+  routineId: number | null;
+  sets: number | null;
+  reps: number | null;
+  weightLb: number | null;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface ExerciseLogWithExercise extends ExerciseLog {
+  exercise: Exercise;
+}
+
+/** Today's view of a routine showing target + actual log per exercise. */
+export interface TodayRoutineRow {
+  routineExercise: RoutineExerciseWithExercise;
+  log: ExerciseLog | null;
+}

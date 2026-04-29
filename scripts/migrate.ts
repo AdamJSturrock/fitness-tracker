@@ -85,6 +85,48 @@ const STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   `CREATE INDEX IF NOT EXISTS meal_items_user_date_idx ON meal_items(user_id, date)`,
+  // ---- Phase 1: workouts ----
+  `CREATE TABLE IF NOT EXISTS exercises (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS exercises_name_idx ON exercises(name)`,
+  `CREATE TABLE IF NOT EXISTS routines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    schedule_days TEXT NOT NULL DEFAULT '',
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS routines_user_idx ON routines(user_id, archived)`,
+  `CREATE TABLE IF NOT EXISTS routine_exercises (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    routine_id INTEGER NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
+    exercise_id INTEGER NOT NULL REFERENCES exercises(id),
+    position INTEGER NOT NULL,
+    target_sets INTEGER,
+    target_reps INTEGER,
+    target_weight_lb REAL,
+    notes TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS routine_exercises_routine_idx ON routine_exercises(routine_id, position)`,
+  `CREATE TABLE IF NOT EXISTS exercise_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    date TEXT NOT NULL,
+    exercise_id INTEGER NOT NULL REFERENCES exercises(id),
+    routine_id INTEGER REFERENCES routines(id),
+    sets INTEGER,
+    reps INTEGER,
+    weight_lb REAL,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS exercise_logs_user_date_idx ON exercise_logs(user_id, date)`,
 ];
 
 async function main() {

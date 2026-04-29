@@ -2,21 +2,32 @@
 
 import { useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Food, MealItemWithFood } from '@/lib/types';
+import type {
+  Food,
+  MealItemWithFood,
+  RoutineWithExercises,
+  TodayRoutineRow,
+  UserName,
+} from '@/lib/types';
 import DailyForm, { type DailyFormInput } from '@/components/DailyForm';
 import FoodPicker from '@/components/FoodPicker';
 import TodaysMeals from '@/components/TodaysMeals';
+import WorkoutSection from '@/components/WorkoutSection';
 import type { FoodFormInput } from '@/components/FoodForm';
 import {
   addMealItem,
   createFood,
   removeMealItem,
+  tickRoutineExercise,
+  untickRoutineExercise,
+  updateExerciseLog,
   updateMealItemServings,
   upsertEntry,
 } from '@/server/actions';
 
 export interface TodayClientProps {
   userId: number;
+  userSegment: UserName;
   date: string;
   meals: MealItemWithFood[];
   foods: Food[];
@@ -24,10 +35,15 @@ export interface TodayClientProps {
   dailyCalorieTarget: number | null;
   initialWeightLb: number | null;
   initialSteps: number | null;
+  routine: RoutineWithExercises | null;
+  routineRows: TodayRoutineRow[];
+  streak: number;
+  hasAnyRoutine: boolean;
 }
 
 export default function TodayClient({
   userId,
+  userSegment,
   date,
   meals,
   foods,
@@ -35,6 +51,10 @@ export default function TodayClient({
   dailyCalorieTarget,
   initialWeightLb,
   initialSteps,
+  routine,
+  routineRows,
+  streak,
+  hasAnyRoutine,
 }: TodayClientProps) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -76,12 +96,39 @@ export default function TodayClient({
     refresh();
   }
 
+  async function handleTick(routineExerciseId: number) {
+    await tickRoutineExercise({ userId, date, routineExerciseId });
+    refresh();
+  }
+  async function handleUntick(routineExerciseId: number) {
+    await untickRoutineExercise({ userId, date, routineExerciseId });
+    refresh();
+  }
+  async function handleUpdateLog(
+    logId: number,
+    patch: { sets?: number | null; reps?: number | null; weightLb?: number | null },
+  ) {
+    await updateExerciseLog({ id: logId, ...patch });
+    refresh();
+  }
+
   return (
     <div className="space-y-4">
       <DailyForm
         initialWeightLb={initialWeightLb}
         initialSteps={initialSteps}
         onSave={handleDailySave}
+      />
+      <WorkoutSection
+        date={date}
+        routine={routine}
+        rows={routineRows}
+        streak={streak}
+        hasAnyRoutine={hasAnyRoutine}
+        userSegment={userSegment}
+        onTick={handleTick}
+        onUntick={handleUntick}
+        onUpdateLog={handleUpdateLog}
       />
       <TodaysMeals
         meals={meals}
