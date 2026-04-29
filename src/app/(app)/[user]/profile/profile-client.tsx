@@ -1,8 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import type { Profile } from '@/lib/types';
 import { bmi, bmiCategory, formatHeight, parseHeight } from '@/lib/units';
+import { updateProfile } from '@/server/actions';
 
 export interface ProfileClientProps {
   profile: Profile;
@@ -41,6 +43,8 @@ export default function ProfileClient({
   profile,
   currentWeightLb,
 }: ProfileClientProps) {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
   const [form, setForm] = useState<FormState>(initialState(profile));
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -97,6 +101,7 @@ export default function ProfileClient({
     setSaving(true);
     try {
       const payload = {
+        name: profile.name,
         heightIn: parsedHeight,
         age: intOrNull(form.age),
         startWeightLb: numOrNull(form.startWeightLb),
@@ -106,10 +111,13 @@ export default function ProfileClient({
         dailyCalorieTarget: intOrNull(form.dailyCalorieTarget),
         dailyStepTarget: intOrNull(form.dailyStepTarget),
       };
-      // eslint-disable-next-line no-console
-      console.log('mock updateProfile', payload);
-      // Wave 3 will await updateProfile(payload).
+      await updateProfile(payload);
       setSavedAt(Date.now());
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save profile.');
     } finally {
       setSaving(false);
     }

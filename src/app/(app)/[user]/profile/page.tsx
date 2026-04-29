@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import type { UserName } from '@/lib/types';
-import { mockEntries, mockProfiles } from '@/lib/fixtures';
+import { getEntries, getProfile } from '@/server/queries';
 import ProfileClient from './profile-client';
 
 const VALID_USERS: readonly UserName[] = ['adam', 'anna'];
@@ -14,10 +14,10 @@ export default async function ProfilePage({
   if (!VALID_USERS.includes(user as UserName)) notFound();
   const name = user as UserName;
 
-  const profile = mockProfiles[name];
+  const profile = await getProfile(name);
 
   // Most recent weighed entry (for live BMI under height/weight).
-  const entries = mockEntries(name);
+  const entries = await getEntries(profile.id);
   const weighed = entries.filter((e) => e.weightLb !== null);
   const currentWeightLb =
     weighed.length > 0 ? weighed[weighed.length - 1].weightLb : null;

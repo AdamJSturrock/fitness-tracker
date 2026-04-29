@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import type { UserName } from '@/lib/types';
-import { mockFoods } from '@/lib/fixtures';
+import { getProfile, listFoods } from '@/server/queries';
 import FoodsClient from './foods-client';
 
 const VALID_USERS: readonly UserName[] = ['adam', 'anna'];
@@ -12,8 +12,12 @@ export default async function FoodsPage({
 }) {
   const { user } = await params;
   if (!VALID_USERS.includes(user as UserName)) notFound();
+  const name = user as UserName;
 
-  const foods = mockFoods;
+  const [profile, foods] = await Promise.all([
+    getProfile(name),
+    listFoods({ includeArchived: false }),
+  ]);
 
   return (
     <div className="space-y-4">
@@ -25,7 +29,7 @@ export default async function FoodsPage({
         </p>
       </header>
 
-      <FoodsClient foods={foods} />
+      <FoodsClient foods={foods} userId={profile.id} />
     </div>
   );
 }

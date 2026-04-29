@@ -1,12 +1,13 @@
 import { notFound } from 'next/navigation';
 import type { UserName } from '@/lib/types';
 import {
-  MOCK_TODAY,
-  mockFoods,
-  mockMealsForToday,
-  mockProfiles,
-  mockRecentlyUsedFoods,
-} from '@/lib/fixtures';
+  getEntries,
+  getMealsForDate,
+  getProfile,
+  getRecentlyUsedFoods,
+  listFoods,
+} from '@/server/queries';
+import { todayIso } from '@/lib/dateUtils';
 import TodayClient from './today-client';
 
 const VALID_USERS: readonly UserName[] = ['adam', 'anna'];
@@ -20,37 +21,36 @@ export default async function TodayPage({
   if (!VALID_USERS.includes(user as UserName)) notFound();
   const name = user as UserName;
 
-  const profile = mockProfiles[name];
-  const date = MOCK_TODAY;
-  const meals = mockMealsForToday(name, date);
-  const foods = mockFoods;
-  const recentFoods = mockRecentlyUsedFoods(name, 8);
+  const profile = await getProfile(name);
+  const date = todayIso();
 
-  // Today's entry — Wave 2 fixtures don't store one explicitly. Pull the
-  // last entry from mockEntries(name) for the same date if it exists.
-  // For now, assume nothing logged yet today and pre-fill with null.
-  const todaysWeight: number | null = null;
-  const todaysSteps: number | null = null;
+  const [meals, foods, recentFoods, entries] = await Promise.all([
+    getMealsForDate(profile.id, date),
+    listFoods({ includeArchived: false }),
+    getRecentlyUsedFoods(profile.id, 8),
+    getEntries(profile.id, date),
+  ]);
 
-  // Pretty date heading.
-  const heading = formatHeading(date);
+  const todaysEntry = entries.find((e) => e.date === date) ?? null;
 
   return (
     <div className="space-y-5">
       <header>
-        <h1 className="text-xl font-bold text-slate-900">{heading}</h1>
+        <h1 className="text-xl font-bold text-slate-900">{formatHeading(date)}</h1>
         <p className="text-sm text-slate-500">
           {profile.displayName}&rsquo;s daily check-in
         </p>
       </header>
 
       <TodayClient
+        userId={profile.id}
+        date={date}
         meals={meals}
         foods={foods}
         recentFoods={recentFoods}
         dailyCalorieTarget={profile.dailyCalorieTarget}
-        initialWeightLb={todaysWeight}
-        initialSteps={todaysSteps}
+        initialWeightLb={todaysEntry?.weightLb ?? null}
+        initialSteps={todaysEntry?.steps ?? null}
       />
     </div>
   );

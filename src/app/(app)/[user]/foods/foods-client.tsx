@@ -1,57 +1,43 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import type { Food } from '@/lib/types';
 import FoodForm, { type FoodFormInput } from '@/components/FoodForm';
+import { archiveFood, createFood, updateFood } from '@/server/actions';
 
 export interface FoodsClientProps {
   foods: Food[];
+  userId: number;
 }
 
-export default function FoodsClient({ foods: initial }: FoodsClientProps) {
-  const [foods, setFoods] = useState(initial);
+export default function FoodsClient({ foods, userId }: FoodsClientProps) {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  function nextId(): number {
-    return Math.max(0, ...foods.map((f) => f.id)) + 1;
+  function refresh() {
+    startTransition(() => {
+      router.refresh();
+    });
   }
 
   async function handleCreate(input: FoodFormInput) {
-    const newFood: Food = {
-      id: nextId(),
-      name: input.name,
-      brand: input.brand,
-      servingLabel: input.servingLabel,
-      caloriesPerServing: input.caloriesPerServing,
-      proteinG: input.proteinG,
-      carbsG: input.carbsG,
-      fatG: input.fatG,
-      archived: false,
-      createdBy: null,
-      createdAt: new Date().toISOString(),
-    };
-    setFoods((prev) => [...prev, newFood]);
+    await createFood({ ...input, createdBy: userId });
     setAdding(false);
-    // eslint-disable-next-line no-console
-    console.log('mock createFood', input);
+    refresh();
   }
 
   async function handleUpdate(id: number, input: FoodFormInput) {
-    setFoods((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, ...input } : f)),
-    );
+    await updateFood({ id, ...input });
     setEditingId(null);
-    // eslint-disable-next-line no-console
-    console.log('mock updateFood', { id, ...input });
+    refresh();
   }
 
-  function handleArchive(id: number) {
-    setFoods((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, archived: !f.archived } : f)),
-    );
-    // eslint-disable-next-line no-console
-    console.log('mock archiveFood', { id });
+  async function handleArchive(id: number) {
+    await archiveFood(id);
+    refresh();
   }
 
   return (
@@ -127,9 +113,10 @@ export default function FoodsClient({ foods: initial }: FoodsClientProps) {
                   <button
                     type="button"
                     onClick={() => handleArchive(f.id)}
-                    className="inline-flex h-9 items-center rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                    disabled={f.archived}
+                    className="inline-flex h-9 items-center rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
                   >
-                    {f.archived ? 'Unarchive' : 'Archive'}
+                    Archive
                   </button>
                 </div>
               </li>
