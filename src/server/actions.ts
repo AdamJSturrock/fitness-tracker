@@ -350,6 +350,20 @@ export async function archiveFood(id: number): Promise<void> {
   revalidateFoodPaths();
 }
 
+// ---------- unarchiveFood ----------
+
+const unarchiveFoodSchema = z.number().int().positive();
+
+export async function unarchiveFood(id: number): Promise<void> {
+  const parsedId = parseOrThrow(unarchiveFoodSchema, id, 'unarchiveFood');
+  const db = getDb();
+  await db.execute({
+    sql: 'UPDATE foods SET archived = 0 WHERE id = ?',
+    args: [parsedId],
+  });
+  revalidateFoodPaths();
+}
+
 // ---------- addMealItem ----------
 
 const addMealItemSchema = z.object({

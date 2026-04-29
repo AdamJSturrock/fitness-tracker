@@ -9,6 +9,7 @@
     "lint": "eslint",
     "migrate": "tsx scripts/migrate.ts",
     "seed:fake": "tsx scripts/seed-fake.ts",
+    "smoke": "tsx scripts/smoke.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

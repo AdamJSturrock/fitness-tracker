@@ -1,18 +1,29 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import type { Food } from '@/lib/types';
 import FoodForm, { type FoodFormInput } from '@/components/FoodForm';
-import { archiveFood, createFood, updateFood } from '@/server/actions';
+import {
+  archiveFood,
+  createFood,
+  unarchiveFood,
+  updateFood,
+} from '@/server/actions';
 
 export interface FoodsClientProps {
   foods: Food[];
   userId: number;
+  showArchived: boolean;
 }
 
-export default function FoodsClient({ foods, userId }: FoodsClientProps) {
+export default function FoodsClient({
+  foods,
+  userId,
+  showArchived,
+}: FoodsClientProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -40,9 +51,21 @@ export default function FoodsClient({ foods, userId }: FoodsClientProps) {
     refresh();
   }
 
+  async function handleUnarchive(id: number) {
+    await unarchiveFood(id);
+    refresh();
+  }
+
+  function toggleShowArchived() {
+    const next = `${pathname}${showArchived ? '' : '?archived=1'}`;
+    startTransition(() => {
+      router.push(next);
+    });
+  }
+
   return (
     <div className="space-y-4">
-      <div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
         {!adding ? (
           <button
             type="button"
@@ -58,11 +81,23 @@ export default function FoodsClient({ foods, userId }: FoodsClientProps) {
             onCancel={() => setAdding(false)}
           />
         )}
+
+        <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={toggleShowArchived}
+            className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+          />
+          Show archived
+        </label>
       </div>
 
       {foods.length === 0 ? (
         <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500 shadow-sm">
-          No foods yet — add your first one above.
+          {showArchived
+            ? 'No foods yet — add your first one above.'
+            : 'No active foods. Toggle "Show archived" to see archived items.'}
         </p>
       ) : (
         <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -110,14 +145,23 @@ export default function FoodsClient({ foods, userId }: FoodsClientProps) {
                   >
                     Edit
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleArchive(f.id)}
-                    disabled={f.archived}
-                    className="inline-flex h-9 items-center rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
-                  >
-                    Archive
-                  </button>
+                  {f.archived ? (
+                    <button
+                      type="button"
+                      onClick={() => handleUnarchive(f.id)}
+                      className="inline-flex h-9 items-center rounded-md border border-emerald-300 bg-emerald-50 px-3 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
+                    >
+                      Unarchive
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleArchive(f.id)}
+                      className="inline-flex h-9 items-center rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                    >
+                      Archive
+                    </button>
+                  )}
                 </div>
               </li>
             ),

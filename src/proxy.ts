@@ -1,3 +1,7 @@
+// Renamed from `middleware.ts` to `proxy.ts` for Next.js 16: `middleware.ts` is
+// deprecated, replaced by `proxy.ts` which exports a `proxy` function. The
+// behaviour is the same — gate non-public paths behind a session cookie.
+
 import { NextResponse, type NextRequest } from 'next/server';
 import { getIronSession } from 'iron-session';
 import type { SessionData } from '@/lib/auth';
@@ -18,12 +22,12 @@ function getCookieSecret(): string {
   return secret;
 }
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const res = NextResponse.next();
 
   // iron-session v8 accepts a Web-style CookieStore (matching next/headers'
-  // `cookies()` shape). Adapt the middleware request/response cookie jars to
-  // that shape so we can read and write the session cookie inline.
+  // `cookies()` shape). Adapt the proxy request/response cookie jars to that
+  // shape so we can read and write the session cookie inline.
   const cookieStore = {
     get: (name: string) => {
       const c = req.cookies.get(name);

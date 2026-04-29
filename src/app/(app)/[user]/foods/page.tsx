@@ -7,16 +7,21 @@ const VALID_USERS: readonly UserName[] = ['adam', 'anna'];
 
 export default async function FoodsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ user: string }>;
+  searchParams: Promise<{ archived?: string }>;
 }) {
   const { user } = await params;
   if (!VALID_USERS.includes(user as UserName)) notFound();
   const name = user as UserName;
 
+  const sp = await searchParams;
+  const includeArchived = sp.archived === '1';
+
   const [profile, foods] = await Promise.all([
     getProfile(name),
-    listFoods({ includeArchived: false }),
+    listFoods({ includeArchived }),
   ]);
 
   return (
@@ -29,7 +34,11 @@ export default async function FoodsPage({
         </p>
       </header>
 
-      <FoodsClient foods={foods} userId={profile.id} />
+      <FoodsClient
+        foods={foods}
+        userId={profile.id}
+        showArchived={includeArchived}
+      />
     </div>
   );
 }

@@ -38,8 +38,14 @@ yarn-error.log*
 /local.db
 /local.db-*
 
+# smoke test stubs (created on the fly by scripts/smoke.ts)
+/.smoke-*.cjs
+
 # vercel
 .vercel
+
+# claude scheduling state
+.claude/
 
 # typescript
 *.tsbuildinfo
