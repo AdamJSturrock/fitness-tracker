@@ -91,21 +91,28 @@ async function main() {
   const { getProfile, getDayCalorieTotals, getMealsForDate } = await import(
     '@/server/queries'
   );
-  const { upsertEntry, addMealItem, removeMealItem, createFood } = await import(
-    '@/server/actions'
-  );
+  const { upsertEntry, addMealItem, removeMealItem, createFood, updateProfile } =
+    await import('@/server/actions');
   const { getDb } = await import('@/lib/db');
 
   const date = tomorrowIso(); // not "today" so we don't disturb fixtures
 
-  // --- 1. profile fetch ---
-  const adam = await getProfile('adam');
-  assert(adam.id === 1, `getProfile('adam').id === 1 (got ${adam.id})`);
-  assert(adam.name === 'adam', `getProfile('adam').name === 'adam'`);
+  // --- 1. profile fetch + updateProfile roundtrip (independent of seed:fake) ---
+  const adamBefore = await getProfile('adam');
+  assert(adamBefore.id === 1, `getProfile('adam').id === 1 (got ${adamBefore.id})`);
+  assert(adamBefore.name === 'adam', `getProfile('adam').name === 'adam'`);
+
+  const adamUpdated = await updateProfile({
+    name: 'adam',
+    startWeightLb: 199.9,
+  });
   assert(
-    adam.startWeightLb !== null,
-    `getProfile('adam').startWeightLb populated by seed`,
+    adamUpdated.startWeightLb === 199.9,
+    `updateProfile sets startWeightLb (got ${adamUpdated.startWeightLb})`,
   );
+  // Restore to whatever it was before so we don't leave smoke-test residue.
+  await updateProfile({ name: 'adam', startWeightLb: adamBefore.startWeightLb });
+  const adam = adamUpdated;
 
   // --- 2. upsertEntry ---
   const entry = await upsertEntry({
@@ -170,10 +177,15 @@ async function main() {
     `meal item is gone from getMealsForDate`,
   );
 
-  // --- cleanup: remove the entry we created so re-runs stay clean ---
+  // --- cleanup: remove the entry and the test food so re-runs stay clean
+  // and we don't leave 'Smoke test food' in the user's library ---
   await db.execute({
     sql: `DELETE FROM entries WHERE user_id = ? AND date = ?`,
     args: [adam.id, date],
+  });
+  await db.execute({
+    sql: `DELETE FROM foods WHERE id = ?`,
+    args: [foodId],
   });
 
   console.log('[smoke] all checks passed.');
