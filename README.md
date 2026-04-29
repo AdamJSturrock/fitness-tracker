@@ -19,7 +19,7 @@ cp .env.local.example .env.local
 #   COOKIE_SECRET=<32+ random characters>
 #   TURSO_DATABASE_URL=file:./local.db   # already the default
 pnpm migrate            # creates tables, seeds adam + anna
-pnpm dev                # http://localhost:3000
+pnpm dev                # http://localhost:7500
 ```
 
 Visit `/`, log in with `APP_PASSWORD`, then go to `/adam/profile` to fill in

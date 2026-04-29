@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 7500",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 7500",
     "lint": "eslint",
     "migrate": "tsx scripts/migrate.ts",
     "seed:fake": "tsx scripts/seed-fake.ts",
