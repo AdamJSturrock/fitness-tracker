@@ -315,3 +315,184 @@ export function totalChangeSinceStart(args: {
   const percent = (lb / startWeightLb) * 100;
   return { lb, percent };
 }
+
+// ---------- 9. calorie-pace projection (deficit → weeks to target) ----------
+
+export interface CaloriePaceProjectionInput {
+  /** YYYY-MM-DD anchor date (e.g. today, or last logged-weight date). */
+  anchorDate: string;
+  /** Weight at the anchor date (lb). */
+  anchorWeightLb: number;
+  /** Maintenance calories at the anchor weight (TDEE = BMR × activity). */
+  tdeeKcal: number;
+  /** What the user is averaging per day (kcal). Use the planned target if no
+   *  real data is available yet. Above tdeeKcal → no loss. */
+  dailyKcal: number;
+  /** Top of the target weight band (lb); projection ends when crossed. */
+  targetMaxLb: number;
+  horizonDays?: number;
+}
+
+export interface CaloriePaceProjection {
+  projection: DatedWeight[];
+  targetReached: string | null;
+  slopeLbPerWeek: number; // negative = losing
+  dailyDeficitKcal: number; // tdee − dailyKcal (positive = deficit)
+}
+
+/**
+ * Project forward from anchor weight using a calorie-deficit model:
+ *   slope_lb_per_week = (dailyKcal − tdeeKcal) × 7 / 3500
+ * This is a flat slope (no compounding), which is good enough for the
+ * UX — the goal is "give the user a believable target ETA from day 1".
+ *
+ * Returns null only for invalid inputs. If dailyKcal >= tdeeKcal we still
+ * emit a flat horizon line and targetReached = null (the chart line shows
+ * the user that, at current intake, they won't reach the band).
+ */
+export function caloriePaceProjection(
+  args: CaloriePaceProjectionInput,
+): CaloriePaceProjection | null {
+  const {
+    anchorDate,
+    anchorWeightLb,
+    tdeeKcal,
+    dailyKcal,
+    targetMaxLb,
+    horizonDays = 365,
+  } = args;
+  if (
+    !Number.isFinite(anchorWeightLb) ||
+    !Number.isFinite(tdeeKcal) ||
+    !Number.isFinite(dailyKcal) ||
+    !Number.isFinite(targetMaxLb) ||
+    anchorWeightLb <= 0 ||
+    tdeeKcal <= 0 ||
+    targetMaxLb <= 0
+  ) {
+    return null;
+  }
+  const dailyDeficit = tdeeKcal - dailyKcal; // +ve = losing
+  const slopeLbPerDay = -dailyDeficit / 3500;
+  const slopeLbPerWeek = slopeLbPerDay * 7;
+
+  // Already at/under target band — no projection needed; emit a flat point.
+  if (anchorWeightLb <= targetMaxLb) {
+    return {
+      projection: [{ date: anchorDate, weightLb: anchorWeightLb }],
+      targetReached: anchorDate,
+      slopeLbPerWeek,
+      dailyDeficitKcal: dailyDeficit,
+    };
+  }
+
+  const points: DatedWeight[] = [
+    { date: anchorDate, weightLb: anchorWeightLb },
+  ];
+  let targetReached: string | null = null;
+  for (let d = 7; d <= horizonDays; d += 7) {
+    const w = anchorWeightLb + slopeLbPerDay * d;
+    const date = addDays(anchorDate, d);
+    points.push({ date, weightLb: w });
+    if (slopeLbPerDay < 0 && w <= targetMaxLb && targetReached === null) {
+      // linearly interpolate the exact crossing day for the ETA.
+      const prev = points[points.length - 2];
+      const segDays = d - daysBetween(anchorDate, prev.date);
+      const dW = w - prev.weightLb; // negative
+      const t = (targetMaxLb - prev.weightLb) / dW;
+      const crossingDays = daysBetween(anchorDate, prev.date) + t * segDays;
+      targetReached = addDays(anchorDate, Math.ceil(crossingDays));
+      // Trim the projection at the crossing for a clean line.
+      points[points.length - 1] = { date: targetReached, weightLb: targetMaxLb };
+      break;
+    }
+  }
+  return {
+    projection: points,
+    targetReached,
+    slopeLbPerWeek,
+    dailyDeficitKcal: dailyDeficit,
+  };
+}
+
+// ---------- 10. required pace (inverse: target by date → kcal/day needed) ----
+
+export interface RequiredPaceInput {
+  /** YYYY-MM-DD anchor date (today). */
+  anchorDate: string;
+  /** Weight at the anchor (lb). */
+  anchorWeightLb: number;
+  /** YYYY-MM-DD desired date to hit `targetWeightMaxLb`. Must be > anchor. */
+  targetDate: string;
+  targetMaxLb: number;
+  /** Maintenance calories at anchor (TDEE = BMR × activity multiplier). */
+  tdeeKcal: number;
+}
+
+export interface RequiredPace {
+  /** Required avg loss rate, lb/week (positive = losing). */
+  lbPerWeek: number;
+  /** Required daily kcal deficit (positive = below TDEE). */
+  dailyDeficitKcal: number;
+  /** Required daily kcal intake (TDEE − deficit), floored at 0. */
+  dailyIntakeKcal: number;
+  /** Days until target date (anchor exclusive, target inclusive). */
+  daysAvailable: number;
+  /** 'easy' (≤0.5 lb/wk), 'moderate' (≤1 lb/wk), 'aggressive' (≤2 lb/wk),
+   *  'unsafe' (>2 lb/wk), or 'past' if target date already passed. */
+  pace: 'past' | 'already-there' | 'easy' | 'moderate' | 'aggressive' | 'unsafe';
+}
+
+/**
+ * Inverse of caloriePaceProjection — given a desired target date, work out
+ * how many lb/wk and kcal/day the user needs.
+ * Returns null only for invalid inputs.
+ */
+export function requiredPace(args: RequiredPaceInput): RequiredPace | null {
+  const { anchorDate, anchorWeightLb, targetDate, targetMaxLb, tdeeKcal } = args;
+  if (
+    !Number.isFinite(anchorWeightLb) ||
+    !Number.isFinite(targetMaxLb) ||
+    !Number.isFinite(tdeeKcal) ||
+    anchorWeightLb <= 0 ||
+    targetMaxLb <= 0 ||
+    tdeeKcal <= 0
+  ) {
+    return null;
+  }
+  const days = daysBetween(anchorDate, targetDate);
+  if (anchorWeightLb <= targetMaxLb) {
+    return {
+      lbPerWeek: 0,
+      dailyDeficitKcal: 0,
+      dailyIntakeKcal: tdeeKcal,
+      daysAvailable: days,
+      pace: 'already-there',
+    };
+  }
+  if (days <= 0) {
+    return {
+      lbPerWeek: NaN,
+      dailyDeficitKcal: NaN,
+      dailyIntakeKcal: NaN,
+      daysAvailable: days,
+      pace: 'past',
+    };
+  }
+  const lbToLose = anchorWeightLb - targetMaxLb;
+  const lbPerWeek = (lbToLose / days) * 7;
+  const dailyDeficitKcal = (lbPerWeek * 3500) / 7;
+  const dailyIntakeKcal = Math.max(0, tdeeKcal - dailyDeficitKcal);
+  let pace: RequiredPace['pace'];
+  if (lbPerWeek <= 0.5) pace = 'easy';
+  else if (lbPerWeek <= 1) pace = 'moderate';
+  else if (lbPerWeek <= 2) pace = 'aggressive';
+  else pace = 'unsafe';
+  return {
+    lbPerWeek,
+    dailyDeficitKcal,
+    dailyIntakeKcal,
+    daysAvailable: days,
+    pace,
+  };
+}

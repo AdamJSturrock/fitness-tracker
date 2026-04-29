@@ -18,6 +18,8 @@ export interface Profile {
   startDate: string | null; // YYYY-MM-DD
   targetWeightMinLb: number | null;
   targetWeightMaxLb: number | null;
+  /** Optional date the user wants to be inside the target band. */
+  targetDate: string | null; // YYYY-MM-DD
   dailyCalorieTarget: number | null;
   dailyStepTarget: number | null;
 }

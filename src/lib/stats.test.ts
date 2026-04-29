@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  caloriePaceProjection,
   currentSmoothedWeight,
   daysToTarget,
   healthyLossLine,
   linearRegression,
   movingAverage,
   projectWeight,
+  requiredPace,
   totalChangeSinceStart,
   weeklyAverageLoss,
   type DatedWeight,
@@ -314,5 +316,105 @@ describe('totalChangeSinceStart', () => {
       lb: 0,
       percent: 0,
     });
+  });
+});
+
+describe('caloriePaceProjection', () => {
+  it('emits a downward line and a targetReached date with a real deficit', () => {
+    const result = caloriePaceProjection({
+      anchorDate: '2026-04-29',
+      anchorWeightLb: 215,
+      tdeeKcal: 2500,
+      dailyKcal: 2000, // 500 kcal deficit → 1 lb/wk
+      targetMaxLb: 180,
+    });
+    expect(result).not.toBeNull();
+    expect(result!.slopeLbPerWeek).toBeCloseTo(-1, 5);
+    expect(result!.dailyDeficitKcal).toBe(500);
+    expect(result!.targetReached).not.toBeNull();
+    // ~35 weeks at 1 lb/wk to lose 35 lb
+    const points = result!.projection;
+    const last = points[points.length - 1];
+    expect(last.weightLb).toBeCloseTo(180, 1);
+  });
+
+  it('returns targetReached=null when intake exceeds TDEE (no loss)', () => {
+    const result = caloriePaceProjection({
+      anchorDate: '2026-04-29',
+      anchorWeightLb: 215,
+      tdeeKcal: 2000,
+      dailyKcal: 2400,
+      targetMaxLb: 180,
+    });
+    expect(result).not.toBeNull();
+    expect(result!.targetReached).toBeNull();
+    expect(result!.slopeLbPerWeek).toBeGreaterThan(0); // gaining
+  });
+
+  it('handles already-at-target by returning a single anchor point', () => {
+    const result = caloriePaceProjection({
+      anchorDate: '2026-04-29',
+      anchorWeightLb: 175,
+      tdeeKcal: 2200,
+      dailyKcal: 1800,
+      targetMaxLb: 180,
+    });
+    expect(result).not.toBeNull();
+    expect(result!.targetReached).toBe('2026-04-29');
+    expect(result!.projection).toHaveLength(1);
+  });
+});
+
+describe('requiredPace', () => {
+  it('computes 1 lb/wk and 500 kcal deficit for 7 lb in 7 weeks', () => {
+    const r = requiredPace({
+      anchorDate: '2026-04-29',
+      anchorWeightLb: 200,
+      targetDate: '2026-06-17', // 49 days = 7 weeks
+      targetMaxLb: 193,
+      tdeeKcal: 2500,
+    });
+    expect(r).not.toBeNull();
+    expect(r!.lbPerWeek).toBeCloseTo(1, 1);
+    expect(r!.dailyDeficitKcal).toBeCloseTo(500, 0);
+    expect(r!.dailyIntakeKcal).toBeCloseTo(2000, 0);
+    expect(r!.pace).toBe('moderate');
+  });
+
+  it("flags pace='unsafe' when >2 lb/wk required", () => {
+    const r = requiredPace({
+      anchorDate: '2026-04-29',
+      anchorWeightLb: 230,
+      targetDate: '2026-05-30', // 31 days
+      targetMaxLb: 200, // 30 lb in 4.4 wks → ~6.8 lb/wk
+      tdeeKcal: 2500,
+    });
+    expect(r).not.toBeNull();
+    expect(r!.pace).toBe('unsafe');
+    expect(r!.lbPerWeek).toBeGreaterThan(2);
+  });
+
+  it("flags pace='past' when target date is in the past", () => {
+    const r = requiredPace({
+      anchorDate: '2026-04-29',
+      anchorWeightLb: 200,
+      targetDate: '2026-04-01',
+      targetMaxLb: 180,
+      tdeeKcal: 2500,
+    });
+    expect(r).not.toBeNull();
+    expect(r!.pace).toBe('past');
+  });
+
+  it("flags 'already-there' if anchor is at/under target", () => {
+    const r = requiredPace({
+      anchorDate: '2026-04-29',
+      anchorWeightLb: 175,
+      targetDate: '2026-12-01',
+      targetMaxLb: 180,
+      tdeeKcal: 2500,
+    });
+    expect(r).not.toBeNull();
+    expect(r!.pace).toBe('already-there');
   });
 });

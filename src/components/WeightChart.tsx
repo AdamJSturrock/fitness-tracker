@@ -21,6 +21,19 @@ export interface WeightChartProps {
   movingAvg: { date: string; weightLb: number }[];
   healthyLoss: { date: string; weightLb: number }[];
   projection: { date: string; weightLb: number }[] | null;
+  /** Calorie-deficit projection — works from day 1 (no MA required). */
+  planProjection: { date: string; weightLb: number }[] | null;
+  /** 2-point required-pace line: (today, current) → (targetDate, targetMax). */
+  requiredLine: { date: string; weightLb: number }[] | null;
+  /** Severity of the required pace, used to color the line. */
+  requiredPaceClass:
+    | 'easy'
+    | 'moderate'
+    | 'aggressive'
+    | 'unsafe'
+    | 'past'
+    | 'already-there'
+    | null;
   targetMinLb: number | null;
   targetMaxLb: number | null;
   heightIn: number | null;
@@ -57,6 +70,8 @@ interface ChartRow {
   ma?: number;
   healthy?: number;
   projection?: number;
+  plan?: number;
+  required?: number;
 }
 
 function buildChartData(props: WeightChartProps): ChartRow[] {
@@ -65,6 +80,9 @@ function buildChartData(props: WeightChartProps): ChartRow[] {
   for (const p of props.movingAvg) dates.add(p.date);
   for (const p of props.healthyLoss) dates.add(p.date);
   if (props.projection) for (const p of props.projection) dates.add(p.date);
+  if (props.planProjection)
+    for (const p of props.planProjection) dates.add(p.date);
+  if (props.requiredLine) for (const p of props.requiredLine) dates.add(p.date);
   dates.add(props.todayIso);
 
   const sorted = Array.from(dates).sort();
@@ -76,6 +94,12 @@ function buildChartData(props: WeightChartProps): ChartRow[] {
   );
   const projMap = props.projection
     ? new Map(props.projection.map((p) => [p.date, p.weightLb]))
+    : null;
+  const planMap = props.planProjection
+    ? new Map(props.planProjection.map((p) => [p.date, p.weightLb]))
+    : null;
+  const reqMap = props.requiredLine
+    ? new Map(props.requiredLine.map((p) => [p.date, p.weightLb]))
     : null;
 
   return sorted.map((date) => {
@@ -90,6 +114,14 @@ function buildChartData(props: WeightChartProps): ChartRow[] {
       const p = projMap.get(date);
       if (p !== undefined) row.projection = p;
     }
+    if (planMap) {
+      const p = planMap.get(date);
+      if (p !== undefined) row.plan = p;
+    }
+    if (reqMap) {
+      const p = reqMap.get(date);
+      if (p !== undefined) row.required = p;
+    }
     return row;
   });
 }
@@ -101,6 +133,8 @@ function computeYDomain(data: ChartRow[], targetMin: number | null, targetMax: n
     if (row.ma !== undefined) values.push(row.ma);
     if (row.healthy !== undefined) values.push(row.healthy);
     if (row.projection !== undefined) values.push(row.projection);
+    if (row.plan !== undefined) values.push(row.plan);
+    if (row.required !== undefined) values.push(row.required);
   }
   if (targetMin !== null) values.push(targetMin);
   if (targetMax !== null) values.push(targetMax);
@@ -168,24 +202,10 @@ export default function WeightChart(props: WeightChartProps) {
   }, [showBmi, props.heightIn, yDomain]);
   const canShowBmi = props.heightIn !== null && props.heightIn > 0;
 
-  if (props.movingAvg.length === 0) {
-    return (
-      <section
-        aria-label="Weight chart"
-        className="flex h-72 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500 md:h-96"
-      >
-        <div>
-          <p className="font-medium text-slate-600">
-            Log your first weight to see the chart
-          </p>
-          <p className="mt-1 text-xs text-slate-400">
-            Add a weight on the Today tab — the smoothed line, healthy-loss
-            reference, and projection will appear here.
-          </p>
-        </div>
-      </section>
-    );
-  }
+  // Empty-state hint banner shown above the chart when there's no data yet,
+  // but we still render the chart so the target band, healthy-loss line, and
+  // plan projection are visible from day 1.
+  const showEmptyHint = props.movingAvg.length === 0;
 
   const showTargetBand =
     props.targetMinLb !== null && props.targetMaxLb !== null;
@@ -195,6 +215,15 @@ export default function WeightChart(props: WeightChartProps) {
       aria-label="Weight chart"
       className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4"
     >
+      {showEmptyHint ? (
+        <div className="mb-3 rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <span className="font-semibold text-slate-700">
+            No weights logged yet.
+          </span>{' '}
+          The chart still shows your target band, healthy-loss reference, and
+          plan projection. Add a weight on Today to see your smoothed curve.
+        </div>
+      ) : null}
       <div className="mb-2 flex items-center justify-end">
         <button
           type="button"
@@ -256,9 +285,18 @@ export default function WeightChart(props: WeightChartProps) {
                 y1={props.targetMinLb as number}
                 y2={props.targetMaxLb as number}
                 fill="#10b981"
-                fillOpacity={0.12}
-                stroke="none"
+                fillOpacity={0.22}
+                stroke="#10b981"
+                strokeOpacity={0.5}
+                strokeDasharray="3 3"
                 ifOverflow="extendDomain"
+                label={{
+                  value: 'Target',
+                  position: 'insideTopRight',
+                  fill: '#047857',
+                  fontSize: 10,
+                  fontWeight: 600,
+                }}
               />
             ) : null}
 
@@ -297,15 +335,51 @@ export default function WeightChart(props: WeightChartProps) {
               isAnimationActive={false}
               connectNulls
             />
+            {props.planProjection ? (
+              <Line
+                type="linear"
+                dataKey="plan"
+                name="Plan (calorie pace)"
+                stroke="#0ea5e9"
+                strokeWidth={1.75}
+                strokeDasharray="2 4"
+                dot={false}
+                isAnimationActive={false}
+                connectNulls
+              />
+            ) : null}
             {props.projection ? (
               <Line
                 type="linear"
                 dataKey="projection"
-                name="Projection"
+                name="Trend (recent data)"
                 stroke="#d97706"
                 strokeWidth={1.5}
                 strokeDasharray="6 4"
                 dot={false}
+                isAnimationActive={false}
+                connectNulls
+              />
+            ) : null}
+            {props.requiredLine ? (
+              <Line
+                type="linear"
+                dataKey="required"
+                name={
+                  props.requiredPaceClass === 'unsafe'
+                    ? 'Required (too aggressive)'
+                    : 'Required (to hit target date)'
+                }
+                stroke={
+                  props.requiredPaceClass === 'unsafe'
+                    ? '#e11d48'
+                    : props.requiredPaceClass === 'aggressive'
+                      ? '#d97706'
+                      : '#7c3aed'
+                }
+                strokeWidth={2}
+                strokeDasharray="5 3"
+                dot={{ r: 3 }}
                 isAnimationActive={false}
                 connectNulls
               />

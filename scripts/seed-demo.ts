@@ -127,6 +127,9 @@ async function main() {
   const startDate = isoDaysAgo(today, HORIZON_DAYS - 1);
   const startWeightLb = 215;
 
+  // Set a target date ~6 months out so the inverse "Required pace" line
+  // shows up on the demo dashboard.
+  const targetDate = isoDaysAgo(today, -180);
   console.log('[seed:demo] writing demo profile');
   await db.execute({
     sql: `UPDATE users
@@ -138,10 +141,11 @@ async function main() {
                 start_date = ?,
                 target_weight_min_lb = 175,
                 target_weight_max_lb = 185,
+                target_date = ?,
                 daily_calorie_target = 2000,
                 daily_step_target = 10000
           WHERE name = 'demo'`,
-    args: [startWeightLb, startDate],
+    args: [startWeightLb, startDate, targetDate],
   });
 
   // ---- 3. blow away demo's existing data -----------------------------------

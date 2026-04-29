@@ -92,6 +92,7 @@ const updateProfileSchema = z.object({
   startDate: dateString.nullable().optional(),
   targetWeightMinLb: z.number().positive().nullable().optional(),
   targetWeightMaxLb: z.number().positive().nullable().optional(),
+  targetDate: dateString.nullable().optional(),
   dailyCalorieTarget: z.number().int().positive().nullable().optional(),
   dailyStepTarget: z.number().int().positive().nullable().optional(),
 });
@@ -117,6 +118,7 @@ export async function updateProfile(input: unknown): Promise<Profile> {
     push('target_weight_min_lb', data.targetWeightMinLb ?? null);
   if ('targetWeightMaxLb' in data)
     push('target_weight_max_lb', data.targetWeightMaxLb ?? null);
+  if ('targetDate' in data) push('target_date', data.targetDate ?? null);
   if ('dailyCalorieTarget' in data)
     push('daily_calorie_target', data.dailyCalorieTarget ?? null);
   if ('dailyStepTarget' in data)

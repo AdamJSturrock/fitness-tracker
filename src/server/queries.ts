@@ -55,6 +55,7 @@ function rowToProfile(r: Row): Profile {
     startDate: toStringOrNull(r.start_date),
     targetWeightMinLb: toNumOrNull(r.target_weight_min_lb),
     targetWeightMaxLb: toNumOrNull(r.target_weight_max_lb),
+    targetDate: toStringOrNull(r.target_date),
     dailyCalorieTarget: toIntOrNull(r.daily_calorie_target),
     dailyStepTarget: toIntOrNull(r.daily_step_target),
   };
@@ -159,7 +160,7 @@ export async function getProfile(name: UserName): Promise<Profile> {
   const result = await db.execute({
     sql: `SELECT id, name, display_name, height_in, age, sex,
                  start_weight_lb, start_date,
-                 target_weight_min_lb, target_weight_max_lb,
+                 target_weight_min_lb, target_weight_max_lb, target_date,
                  daily_calorie_target, daily_step_target
             FROM users WHERE name = ? LIMIT 1`,
     args: [name],

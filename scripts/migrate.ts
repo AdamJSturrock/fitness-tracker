@@ -51,6 +51,7 @@ const STATEMENTS: string[] = [
     start_date TEXT,
     target_weight_min_lb REAL,
     target_weight_max_lb REAL,
+    target_date TEXT,
     daily_calorie_target INTEGER,
     daily_step_target INTEGER
   )`,
@@ -141,6 +142,24 @@ async function main() {
     console.log(`[migrate] exec: ${oneLine.slice(0, 80)}…`);
     await client.execute(sql);
   }
+
+  // ---- Idempotent column additions for existing DBs ----
+  // SQLite has no `ADD COLUMN IF NOT EXISTS`, so try and swallow
+  // "duplicate column" errors.
+  async function tryAddColumn(table: string, column: string, type: string) {
+    try {
+      console.log(`[migrate] try ALTER ${table} ADD COLUMN ${column} ${type}`);
+      await client.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/duplicate column|already exists/i.test(msg)) {
+        // already there — fine
+      } else {
+        throw err;
+      }
+    }
+  }
+  await tryAddColumn('users', 'target_date', 'TEXT');
 
   console.log('[migrate] seeding users (INSERT OR IGNORE)');
   await client.execute({

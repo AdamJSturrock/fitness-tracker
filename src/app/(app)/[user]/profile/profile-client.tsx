@@ -29,6 +29,7 @@ interface FormState {
   startDate: string;
   targetWeightMinLb: string;
   targetWeightMaxLb: string;
+  targetDate: string;
   dailyCalorieTarget: string;
   dailyStepTarget: string;
   activityLevel: ActivityLevel;
@@ -47,6 +48,7 @@ function initialState(p: Profile): FormState {
     startDate: p.startDate ?? '',
     targetWeightMinLb: fmtNum(p.targetWeightMinLb),
     targetWeightMaxLb: fmtNum(p.targetWeightMaxLb),
+    targetDate: p.targetDate ?? '',
     dailyCalorieTarget: fmtNum(p.dailyCalorieTarget),
     dailyStepTarget: fmtNum(p.dailyStepTarget),
     activityLevel: 'light',
@@ -156,6 +158,7 @@ export default function ProfileClient({
         startDate: form.startDate.trim() === '' ? null : form.startDate.trim(),
         targetWeightMinLb: min,
         targetWeightMaxLb: max,
+        targetDate: form.targetDate.trim() === '' ? null : form.targetDate.trim(),
         dailyCalorieTarget: intOrNull(form.dailyCalorieTarget),
         dailyStepTarget: intOrNull(form.dailyStepTarget),
       };
@@ -264,6 +267,18 @@ export default function ProfileClient({
             onChange={(e) => update('targetWeightMaxLb', e.target.value)}
             className={inputCls}
           />
+        </Field>
+        <Field label="Target date (when to hit it)">
+          <input
+            type="date"
+            value={form.targetDate}
+            onChange={(e) => update('targetDate', e.target.value)}
+            className={inputCls}
+          />
+          <p className="mt-1 text-xs text-slate-500">
+            Optional. If set, the dashboard shows the calorie pace required to
+            hit your target by this date.
+          </p>
         </Field>
         <div className="sm:col-span-2">
           {suggested ? (
