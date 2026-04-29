@@ -1,6 +1,9 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getSession } from '@/lib/auth';
+import UserSwitcher from '@/components/UserSwitcher';
+import NavTabs from '@/components/NavTabs';
+import LogoutButton from '@/components/LogoutButton';
 
 export default async function AppLayout({
   children,
@@ -14,45 +17,22 @@ export default async function AppLayout({
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
-      <header className="sticky top-0 z-10 border-b border-neutral-200 bg-white/90 backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/90">
+    <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900">
+      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
           <Link
             href="/"
-            className="text-base font-semibold tracking-tight"
+            className="text-base font-semibold tracking-tight text-slate-900"
           >
             Fitness Tracker
           </Link>
-
-          {/* Wave 2 Agent U replaces this with <UserSwitcher />. */}
-          <div
-            data-placeholder="user-switcher"
-            className="text-xs text-neutral-500 dark:text-neutral-400"
-          >
-            switcher TBD
-          </div>
-
-          <form action="/api/logout" method="post">
-            <button
-              type="submit"
-              formMethod="post"
-              className="rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            >
-              Log out
-            </button>
-          </form>
+          <UserSwitcher />
+          <LogoutButton />
         </div>
-
-        {/* Wave 2 Agent U replaces this with <NavTabs />. */}
-        <div
-          data-placeholder="nav-tabs"
-          className="mx-auto max-w-3xl px-4 pb-2 text-xs text-neutral-500 dark:text-neutral-400"
-        >
-          tabs TBD
-        </div>
+        <NavTabs />
       </header>
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-5">
         {children}
       </main>
     </div>
