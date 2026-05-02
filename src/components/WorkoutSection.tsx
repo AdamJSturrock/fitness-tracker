@@ -33,6 +33,19 @@ export interface WorkoutSectionProps {
 
 const DOW_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+function formatLastSnapshot(snap: TodayRoutineRow['lastSnapshot']): string {
+  if (!snap) return '';
+  const parts: string[] = [];
+  if (snap.totalSets != null && snap.topReps != null) {
+    parts.push(`${snap.totalSets}×${snap.topReps}`);
+  } else if (snap.topReps != null) {
+    parts.push(`${snap.topReps} reps`);
+  }
+  if (snap.topWeightLb != null) parts.push(`@ ${formatWeight(snap.topWeightLb, 0)}`);
+  if (snap.e1rm != null) parts.push(`· est. 1RM ${Math.round(snap.e1rm)}`);
+  return parts.join(' ');
+}
+
 function formatTarget(row: TodayRoutineRow): string {
   const re = row.routineExercise;
   if (re.exercise.category === 'cardio') {
@@ -304,6 +317,16 @@ function RoutineRow({
             {categoryBadge()}
           </p>
           <p className="text-xs text-slate-500">{formatTarget(row)}</p>
+          {row.lastSnapshot && !isCardio ? (
+            <p className="mt-0.5 text-[11px] text-slate-400">
+              Last: {formatLastSnapshot(row.lastSnapshot)}
+              {row.lastSnapshot.isPr ? (
+                <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                  PR
+                </span>
+              ) : null}
+            </p>
+          ) : null}
         </div>
       </div>
 

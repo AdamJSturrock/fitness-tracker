@@ -9,8 +9,11 @@ import type {
   ExerciseLog,
   ExerciseLogWithExercise,
   Food,
+  GoalMode,
   MealItem,
   MealItemWithFood,
+  PerformanceSnapshot,
+  PerformanceSnapshotWithExercise,
   Profile,
   Routine,
   RoutineExercise,
@@ -42,6 +45,10 @@ function toStringOrNull(v: unknown): string | null {
   return String(v);
 }
 
+function parseGoalMode(raw: unknown): GoalMode {
+  return String(raw) === 'build' ? 'build' : 'loss';
+}
+
 function rowToProfile(r: Row): Profile {
   const sex = r.sex === null || r.sex === undefined ? null : String(r.sex);
   return {
@@ -58,6 +65,8 @@ function rowToProfile(r: Row): Profile {
     targetDate: toStringOrNull(r.target_date),
     dailyCalorieTarget: toIntOrNull(r.daily_calorie_target),
     dailyStepTarget: toIntOrNull(r.daily_step_target),
+    mode: parseGoalMode(r.mode),
+    proteinTargetG: toIntOrNull(r.protein_target_g),
   };
 }
 
@@ -161,7 +170,8 @@ export async function getProfile(name: UserName): Promise<Profile> {
     sql: `SELECT id, name, display_name, height_in, age, sex,
                  start_weight_lb, start_date,
                  target_weight_min_lb, target_weight_max_lb, target_date,
-                 daily_calorie_target, daily_step_target
+                 daily_calorie_target, daily_step_target,
+                 mode, protein_target_g
             FROM users WHERE name = ? LIMIT 1`,
     args: [name],
   });
@@ -396,6 +406,22 @@ function rowToRoutineExercise(r: Row): RoutineExercise {
   };
 }
 
+function rowToPerformanceSnapshot(r: Row): PerformanceSnapshot {
+  return {
+    id: Number(r.id),
+    userId: Number(r.user_id),
+    exerciseId: Number(r.exercise_id),
+    date: String(r.date),
+    topWeightLb: toNumOrNull(r.top_weight_lb),
+    topReps: toIntOrNull(r.top_reps),
+    totalVolumeLb: toNumOrNull(r.total_volume_lb),
+    totalSets: toIntOrNull(r.total_sets),
+    e1rm: toNumOrNull(r.e1rm),
+    isPr: Number(r.is_pr) !== 0,
+    createdAt: String(r.created_at),
+  };
+}
+
 function rowToExerciseLog(r: Row): ExerciseLog {
   return {
     id: Number(r.id),
@@ -567,14 +593,123 @@ export async function getTodayRoutineRows(
     const key = `${log.exerciseId}::${log.routineId ?? 'null'}`;
     logsByExerciseAndRoutine.set(key, log);
   }
+
+  // Fetch the most recent prior snapshot per exercise in this routine — so
+  // each row can show "Last time: 3×8 @ 95 lb · est. 1RM 119" and let the
+  // user push a little harder than last time.
+  const exerciseIds = routine.exercises.map((re) => re.exerciseId);
+  const lastSnapshots = await getLatestSnapshotsByExercise(
+    userId,
+    exerciseIds,
+    date,
+  );
+
   const rows: TodayRoutineRow[] = routine.exercises.map((re) => {
     const key = `${re.exerciseId}::${routine.id}`;
     const log = logsByExerciseAndRoutine.get(key) ?? null;
     if (log) usedLogIds.add(log.id);
-    return { routineExercise: re, log };
+    return {
+      routineExercise: re,
+      log,
+      lastSnapshot: lastSnapshots.get(re.exerciseId) ?? null,
+    };
   });
   const adHocLogs = allLogs.filter((l) => !usedLogIds.has(l.id));
   return { routine, rows, adHocLogs };
+}
+
+// ---- Performance snapshots ----
+
+/**
+ * Most recent snapshot strictly before `beforeDate` for each exercise in
+ * `exerciseIds`. Returns a Map keyed by exerciseId. Empty map if no ids.
+ */
+export async function getLatestSnapshotsByExercise(
+  userId: number,
+  exerciseIds: number[],
+  beforeDate: string,
+): Promise<Map<number, PerformanceSnapshot>> {
+  const out = new Map<number, PerformanceSnapshot>();
+  if (exerciseIds.length === 0) return out;
+  const db = getDb();
+  const placeholders = exerciseIds.map(() => '?').join(',');
+  const result = await db.execute({
+    sql: `SELECT ps.id, ps.user_id, ps.exercise_id, ps.date,
+                 ps.top_weight_lb, ps.top_reps, ps.total_volume_lb,
+                 ps.total_sets, ps.e1rm, ps.is_pr, ps.created_at
+            FROM performance_snapshots ps
+            JOIN (
+              SELECT exercise_id, MAX(date) AS max_date
+                FROM performance_snapshots
+               WHERE user_id = ?
+                 AND date < ?
+                 AND exercise_id IN (${placeholders})
+               GROUP BY exercise_id
+            ) m
+              ON m.exercise_id = ps.exercise_id
+             AND m.max_date    = ps.date
+           WHERE ps.user_id = ?`,
+    args: [userId, beforeDate, ...exerciseIds, userId],
+  });
+  for (const r of result.rows) {
+    const snap = rowToPerformanceSnapshot(r);
+    out.set(snap.exerciseId, snap);
+  }
+  return out;
+}
+
+/**
+ * Strength PRs in the last `days` days for the user, newest first.
+ * Each row includes the exercise so the UI can render
+ * "Bench press · 135 × 5 (est. 1RM 158) · 3 days ago".
+ */
+export async function getRecentPrs(
+  userId: number,
+  days: number,
+  limit: number,
+): Promise<PerformanceSnapshotWithExercise[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT ps.id, ps.user_id, ps.exercise_id, ps.date,
+                 ps.top_weight_lb, ps.top_reps, ps.total_volume_lb,
+                 ps.total_sets, ps.e1rm, ps.is_pr, ps.created_at,
+                 ${EX_JOIN_COLUMNS}
+            FROM performance_snapshots ps
+            JOIN exercises ON exercises.id = ps.exercise_id
+           WHERE ps.user_id = ?
+             AND ps.is_pr = 1
+             AND ps.date >= date('now', ?)
+           ORDER BY ps.date DESC, ps.id DESC
+           LIMIT ?`,
+    args: [userId, `-${days} days`, limit],
+  });
+  return result.rows.map((r) => ({
+    ...rowToPerformanceSnapshot(r),
+    exercise: rowToExerciseAliased(r, 'ex_'),
+  }));
+}
+
+/**
+ * All snapshots for one exercise, oldest → newest, for a progressive-overload
+ * chart. Caps at the last `days` of history.
+ */
+export async function getExerciseHistory(
+  userId: number,
+  exerciseId: number,
+  days = 180,
+): Promise<PerformanceSnapshot[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT id, user_id, exercise_id, date,
+                 top_weight_lb, top_reps, total_volume_lb,
+                 total_sets, e1rm, is_pr, created_at
+            FROM performance_snapshots
+           WHERE user_id = ? AND exercise_id = ?
+             AND date >= date('now', ?)
+           ORDER BY date ASC, id ASC`,
+    args: [userId, exerciseId, `-${days} days`],
+  });
+  return result.rows.map(rowToPerformanceSnapshot);
 }
 
 /**

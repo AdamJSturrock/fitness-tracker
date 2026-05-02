@@ -80,7 +80,9 @@ export function movingAverage(series: DatedWeight[], window = 7): DatedWeight[] 
   return out;
 }
 
-// ---------- 2. healthy-loss reference line ----------
+// ---------- 2. healthy trend reference line ----------
+
+export type GoalMode = 'loss' | 'build';
 
 /**
  * The "max healthy loss" reference line — anchored at start_date,
@@ -95,36 +97,52 @@ export function healthyLossLine(args: {
   startWeightLb: number;
   throughDate: string;
 }): DatedWeight[] {
-  const { startDate, startWeightLb, throughDate } = args;
+  return healthyTrendLine({ ...args, mode: 'loss' });
+}
+
+/**
+ * Mode-aware healthy reference line.
+ *
+ * - mode='loss':  slope = -min(0.01 * startWeight, 2) lb/wk (NHS guideline).
+ * - mode='build': slope = +min(0.005 * startWeight, 1) lb/wk. Half the loss
+ *   rate is the standard "lean gain" guidance — gaining faster than ~1 lb/wk
+ *   tips into mostly fat. First point is exactly (startDate, startWeightLb).
+ */
+export function healthyTrendLine(args: {
+  startDate: string;
+  startWeightLb: number;
+  throughDate: string;
+  mode: GoalMode;
+}): DatedWeight[] {
+  const { startDate, startWeightLb, throughDate, mode } = args;
   const totalDays = daysBetween(startDate, throughDate);
   if (totalDays < 0) return [{ date: startDate, weightLb: startWeightLb }];
 
-  const lossPerWeek = Math.min(0.01 * startWeightLb, 2);
-  const lossPerDay = lossPerWeek / 7;
+  const ratePerWeek =
+    mode === 'loss'
+      ? -Math.min(0.01 * startWeightLb, 2)
+      : Math.min(0.005 * startWeightLb, 1);
+  const ratePerDay = ratePerWeek / 7;
 
   const points: DatedWeight[] = [];
-  // First point: the anchor.
   points.push({ date: startDate, weightLb: startWeightLb });
 
-  // Find the next Monday after startDate, then step weekly.
-  // getUTCDay(): Sun=0, Mon=1, ..., Sat=6.
   const startDow = parseYmd(startDate).getUTCDay();
-  const daysToNextMonday = ((1 - startDow + 7) % 7) || 7; // strictly after startDate
+  const daysToNextMonday = ((1 - startDow + 7) % 7) || 7;
   let cursorDays = daysToNextMonday;
 
   while (cursorDays < totalDays) {
     const date = addDays(startDate, cursorDays);
-    const weightLb = startWeightLb - lossPerDay * cursorDays;
+    const weightLb = startWeightLb + ratePerDay * cursorDays;
     points.push({ date, weightLb });
     cursorDays += 7;
   }
 
-  // Always include the actual end date (unless it already coincides with the last weekly point).
   const last = points[points.length - 1];
   if (last.date !== throughDate) {
     points.push({
       date: throughDate,
-      weightLb: startWeightLb - lossPerDay * totalDays,
+      weightLb: startWeightLb + ratePerDay * totalDays,
     });
   }
 
@@ -182,8 +200,13 @@ export function linearRegression(points: { x: number; y: number }[]): Regression
  * `lookbackDays` of `maSeries`. Returns null if there isn't enough data
  * (fewer than 7 distinct points in the lookback window).
  *
- * If the slope is non-negative (no loss), still emit a flat-ish line for
- * the full horizon and report `targetReached: null`.
+ * `targetWeightMaxLb` is the boundary the user is heading toward — for
+ * loss mode it's the upper bound of the target band; for build mode it's
+ * the lower bound (the floor they want to climb above).
+ *
+ * If the trend isn't moving toward the target (no loss when mode='loss',
+ * no gain when mode='build'), we still emit a flat-ish line for the full
+ * horizon and report `targetReached: null`.
  */
 export function projectWeight(args: {
   maSeries: DatedWeight[];
@@ -191,6 +214,7 @@ export function projectWeight(args: {
   targetWeightMaxLb: number;
   lookbackDays?: number;
   horizonDays?: number;
+  mode?: GoalMode;
 }): Projection | null {
   const {
     maSeries,
@@ -198,6 +222,7 @@ export function projectWeight(args: {
     targetWeightMaxLb,
     lookbackDays = 14,
     horizonDays = 365,
+    mode = 'loss',
   } = args;
 
   if (maSeries.length === 0) return null;
@@ -223,16 +248,17 @@ export function projectWeight(args: {
   const projection: DatedWeight[] = [];
   let targetReached: string | null = null;
 
-  // Weekly resolution from today out.
   for (let week = 0; week * 7 <= horizonDays; week++) {
     const dayOffset = week * 7;
     const date = addDays(today, dayOffset);
     const weightLb = startY + slope * dayOffset;
     projection.push({ date, weightLb });
 
-    // Stop once we cross the target (only meaningful if losing).
-    if (slope < 0 && weightLb <= targetWeightMaxLb) {
-      // Refine to the exact day we hit target.
+    const crossed =
+      mode === 'loss'
+        ? slope < 0 && weightLb <= targetWeightMaxLb
+        : slope > 0 && weightLb >= targetWeightMaxLb;
+    if (crossed) {
       const dayHit = (targetWeightMaxLb - startY) / slope;
       if (Number.isFinite(dayHit) && dayHit >= 0) {
         targetReached = addDays(today, Math.ceil(dayHit));
@@ -254,18 +280,31 @@ export function projectWeight(args: {
 // ---------- 5. days to target ----------
 
 /**
- * Pure arithmetic. Returns the number of days at which:
- *   currentMaWeightLb + slopeLbPerDay * days <= targetWeightMaxLb
- * Returns null if slope ≥ 0 (not losing) or already at/below target.
+ * Pure arithmetic. Returns the number of days until the modeled weight
+ * crosses the target boundary. For mode='loss' the target is the upper
+ * bound (you must be above it and losing); for mode='build' the target
+ * is the lower bound (you must be below it and gaining). Returns null
+ * when the trend isn't heading toward the boundary or already crossed.
  */
 export function daysToTarget(args: {
   currentMaWeightLb: number;
   slopeLbPerDay: number;
   targetWeightMaxLb: number;
+  mode?: GoalMode;
 }): number | null {
-  const { currentMaWeightLb, slopeLbPerDay, targetWeightMaxLb } = args;
-  if (currentMaWeightLb <= targetWeightMaxLb) return null;
-  if (slopeLbPerDay >= 0) return null;
+  const {
+    currentMaWeightLb,
+    slopeLbPerDay,
+    targetWeightMaxLb,
+    mode = 'loss',
+  } = args;
+  if (mode === 'loss') {
+    if (currentMaWeightLb <= targetWeightMaxLb) return null;
+    if (slopeLbPerDay >= 0) return null;
+  } else {
+    if (currentMaWeightLb >= targetWeightMaxLb) return null;
+    if (slopeLbPerDay <= 0) return null;
+  }
   const days = (targetWeightMaxLb - currentMaWeightLb) / slopeLbPerDay;
   return Math.max(0, Math.ceil(days));
 }
@@ -326,18 +365,26 @@ export interface CaloriePaceProjectionInput {
   /** Maintenance calories at the anchor weight (TDEE = BMR × activity). */
   tdeeKcal: number;
   /** What the user is averaging per day (kcal). Use the planned target if no
-   *  real data is available yet. Above tdeeKcal → no loss. */
+   *  real data is available yet. Below tdeeKcal in build mode → no gain;
+   *  above tdeeKcal in loss mode → no loss. */
   dailyKcal: number;
-  /** Top of the target weight band (lb); projection ends when crossed. */
+  /**
+   * Boundary the projection ends at — for loss mode the upper bound of the
+   * target band, for build mode the lower bound (the floor you're climbing
+   * toward).
+   */
   targetMaxLb: number;
   horizonDays?: number;
+  mode?: GoalMode;
 }
 
 export interface CaloriePaceProjection {
   projection: DatedWeight[];
   targetReached: string | null;
-  slopeLbPerWeek: number; // negative = losing
-  dailyDeficitKcal: number; // tdee − dailyKcal (positive = deficit)
+  /** Negative = losing, positive = gaining. */
+  slopeLbPerWeek: number;
+  /** tdee − dailyKcal. Positive = deficit (loss mode); negative = surplus (build mode). */
+  dailyDeficitKcal: number;
 }
 
 /**
@@ -360,6 +407,7 @@ export function caloriePaceProjection(
     dailyKcal,
     targetMaxLb,
     horizonDays = 365,
+    mode = 'loss',
   } = args;
   if (
     !Number.isFinite(anchorWeightLb) ||
@@ -376,8 +424,12 @@ export function caloriePaceProjection(
   const slopeLbPerDay = -dailyDeficit / 3500;
   const slopeLbPerWeek = slopeLbPerDay * 7;
 
-  // Already at/under target band — no projection needed; emit a flat point.
-  if (anchorWeightLb <= targetMaxLb) {
+  // Already on the target side of the boundary — emit a flat point.
+  const alreadyThere =
+    mode === 'loss'
+      ? anchorWeightLb <= targetMaxLb
+      : anchorWeightLb >= targetMaxLb;
+  if (alreadyThere) {
     return {
       projection: [{ date: anchorDate, weightLb: anchorWeightLb }],
       targetReached: anchorDate,
@@ -394,15 +446,17 @@ export function caloriePaceProjection(
     const w = anchorWeightLb + slopeLbPerDay * d;
     const date = addDays(anchorDate, d);
     points.push({ date, weightLb: w });
-    if (slopeLbPerDay < 0 && w <= targetMaxLb && targetReached === null) {
-      // linearly interpolate the exact crossing day for the ETA.
+    const crossed =
+      mode === 'loss'
+        ? slopeLbPerDay < 0 && w <= targetMaxLb
+        : slopeLbPerDay > 0 && w >= targetMaxLb;
+    if (crossed && targetReached === null) {
       const prev = points[points.length - 2];
       const segDays = d - daysBetween(anchorDate, prev.date);
-      const dW = w - prev.weightLb; // negative
+      const dW = w - prev.weightLb;
       const t = (targetMaxLb - prev.weightLb) / dW;
       const crossingDays = daysBetween(anchorDate, prev.date) + t * segDays;
       targetReached = addDays(anchorDate, Math.ceil(crossingDays));
-      // Trim the projection at the crossing for a clean line.
       points[points.length - 1] = { date: targetReached, weightLb: targetMaxLb };
       break;
     }
@@ -422,24 +476,39 @@ export interface RequiredPaceInput {
   anchorDate: string;
   /** Weight at the anchor (lb). */
   anchorWeightLb: number;
-  /** YYYY-MM-DD desired date to hit `targetWeightMaxLb`. Must be > anchor. */
+  /** YYYY-MM-DD desired date to hit `targetMaxLb`. Must be > anchor. */
   targetDate: string;
+  /**
+   * Boundary to cross — upper bound for loss mode, lower bound (floor) for
+   * build mode.
+   */
   targetMaxLb: number;
   /** Maintenance calories at anchor (TDEE = BMR × activity multiplier). */
   tdeeKcal: number;
+  mode?: GoalMode;
 }
 
 export interface RequiredPace {
-  /** Required avg loss rate, lb/week (positive = losing). */
+  /** Required avg rate, lb/week. Positive — magnitude only; the direction is
+   *  implied by mode. */
   lbPerWeek: number;
-  /** Required daily kcal deficit (positive = below TDEE). */
+  /**
+   * Required daily kcal delta vs TDEE. For loss mode this is a deficit
+   * (positive = below TDEE); for build mode it's a surplus (positive =
+   * above TDEE). Always non-negative.
+   */
   dailyDeficitKcal: number;
-  /** Required daily kcal intake (TDEE − deficit), floored at 0. */
+  /** Required daily kcal intake (TDEE ± delta), floored at 0. */
   dailyIntakeKcal: number;
   /** Days until target date (anchor exclusive, target inclusive). */
   daysAvailable: number;
-  /** 'easy' (≤0.5 lb/wk), 'moderate' (≤1 lb/wk), 'aggressive' (≤2 lb/wk),
-   *  'unsafe' (>2 lb/wk), or 'past' if target date already passed. */
+  /**
+   * Pace bucket. Thresholds depend on mode:
+   *   loss:  easy ≤0.5, moderate ≤1, aggressive ≤2, unsafe >2 (lb/wk)
+   *   build: easy ≤0.25, moderate ≤0.5, aggressive ≤1, unsafe >1
+   * Above the safe ceiling extra calories tend to deposit as fat rather
+   * than lean mass.
+   */
   pace: 'past' | 'already-there' | 'easy' | 'moderate' | 'aggressive' | 'unsafe';
 }
 
@@ -449,7 +518,14 @@ export interface RequiredPace {
  * Returns null only for invalid inputs.
  */
 export function requiredPace(args: RequiredPaceInput): RequiredPace | null {
-  const { anchorDate, anchorWeightLb, targetDate, targetMaxLb, tdeeKcal } = args;
+  const {
+    anchorDate,
+    anchorWeightLb,
+    targetDate,
+    targetMaxLb,
+    tdeeKcal,
+    mode = 'loss',
+  } = args;
   if (
     !Number.isFinite(anchorWeightLb) ||
     !Number.isFinite(targetMaxLb) ||
@@ -461,7 +537,11 @@ export function requiredPace(args: RequiredPaceInput): RequiredPace | null {
     return null;
   }
   const days = daysBetween(anchorDate, targetDate);
-  if (anchorWeightLb <= targetMaxLb) {
+  const alreadyThere =
+    mode === 'loss'
+      ? anchorWeightLb <= targetMaxLb
+      : anchorWeightLb >= targetMaxLb;
+  if (alreadyThere) {
     return {
       lbPerWeek: 0,
       dailyDeficitKcal: 0,
@@ -479,15 +559,28 @@ export function requiredPace(args: RequiredPaceInput): RequiredPace | null {
       pace: 'past',
     };
   }
-  const lbToLose = anchorWeightLb - targetMaxLb;
-  const lbPerWeek = (lbToLose / days) * 7;
+  const lbDelta =
+    mode === 'loss'
+      ? anchorWeightLb - targetMaxLb
+      : targetMaxLb - anchorWeightLb;
+  const lbPerWeek = (lbDelta / days) * 7;
   const dailyDeficitKcal = (lbPerWeek * 3500) / 7;
-  const dailyIntakeKcal = Math.max(0, tdeeKcal - dailyDeficitKcal);
+  const dailyIntakeKcal =
+    mode === 'loss'
+      ? Math.max(0, tdeeKcal - dailyDeficitKcal)
+      : tdeeKcal + dailyDeficitKcal;
   let pace: RequiredPace['pace'];
-  if (lbPerWeek <= 0.5) pace = 'easy';
-  else if (lbPerWeek <= 1) pace = 'moderate';
-  else if (lbPerWeek <= 2) pace = 'aggressive';
-  else pace = 'unsafe';
+  if (mode === 'loss') {
+    if (lbPerWeek <= 0.5) pace = 'easy';
+    else if (lbPerWeek <= 1) pace = 'moderate';
+    else if (lbPerWeek <= 2) pace = 'aggressive';
+    else pace = 'unsafe';
+  } else {
+    if (lbPerWeek <= 0.25) pace = 'easy';
+    else if (lbPerWeek <= 0.5) pace = 'moderate';
+    else if (lbPerWeek <= 1) pace = 'aggressive';
+    else pace = 'unsafe';
+  }
   return {
     lbPerWeek,
     dailyDeficitKcal,
@@ -495,4 +588,29 @@ export function requiredPace(args: RequiredPaceInput): RequiredPace | null {
     daysAvailable: days,
     pace,
   };
+}
+
+// ---------- 11. estimated 1-rep-max (Epley) -----------------------------
+
+/**
+ * Epley estimated 1-rep-max: weight × (1 + reps/30).
+ * The standard reference for progressive-overload tracking — lets us compare
+ * a heavy 5×5 against a higher-rep set on a single axis. Returns null if any
+ * input is missing/invalid or non-positive.
+ */
+export function epleyOneRepMax(
+  weightLb: number | null | undefined,
+  reps: number | null | undefined,
+): number | null {
+  if (
+    weightLb == null ||
+    reps == null ||
+    !Number.isFinite(weightLb) ||
+    !Number.isFinite(reps) ||
+    weightLb <= 0 ||
+    reps <= 0
+  ) {
+    return null;
+  }
+  return weightLb * (1 + reps / 30);
 }

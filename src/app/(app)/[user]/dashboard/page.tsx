@@ -5,11 +5,12 @@ import {
   getEntries,
   getMealsForDate,
   getProfile,
+  getRecentPrs,
 } from '@/server/queries';
 import {
   caloriePaceProjection,
   currentSmoothedWeight,
-  healthyLossLine,
+  healthyTrendLine,
   movingAverage,
   projectWeight,
   requiredPace,
@@ -17,6 +18,7 @@ import {
 } from '@/lib/stats';
 import StatsPanel from '@/components/StatsPanel';
 import WeightChart from '@/components/WeightChart';
+import RecentPrs from '@/components/RecentPrs';
 import { todayIso } from '@/lib/dateUtils';
 import { ACTIVITY_LEVELS, bmrMifflinStJeor, tdee } from '@/lib/units';
 
@@ -33,11 +35,17 @@ export default async function DashboardPage({
 
   const profile = await getProfile(name);
   const today = todayIso();
-  const [entries, meals, dayCalorieTotals] = await Promise.all([
+  const [entries, meals, dayCalorieTotals, recentPrs] = await Promise.all([
     getEntries(profile.id),
     getMealsForDate(profile.id, today),
     getDayCalorieTotals(profile.id),
+    getRecentPrs(profile.id, 30, 5),
   ]);
+  const mode = profile.mode;
+  // The boundary the projection aims at: upper bound for loss, lower bound
+  // (the floor you climb above) for build.
+  const targetBoundaryLb =
+    mode === 'build' ? profile.targetWeightMinLb : profile.targetWeightMaxLb;
 
   const todaysCalories = meals.reduce(
     (sum, m) => sum + Math.round(m.food.caloriesPerServing * m.servings),
@@ -58,19 +66,21 @@ export default async function DashboardPage({
 
   const healthy =
     profile.startDate && profile.startWeightLb != null
-      ? healthyLossLine({
+      ? healthyTrendLine({
           startDate: profile.startDate,
           startWeightLb: profile.startWeightLb,
           throughDate: today,
+          mode,
         })
       : [];
 
   const projectionResult =
-    profile.targetWeightMaxLb != null && ma.length > 0
+    targetBoundaryLb != null && ma.length > 0
       ? projectWeight({
           maSeries: ma,
           today: ma[ma.length - 1].date,
-          targetWeightMaxLb: profile.targetWeightMaxLb,
+          targetWeightMaxLb: targetBoundaryLb,
+          mode,
         })
       : null;
 
@@ -97,7 +107,7 @@ export default async function DashboardPage({
   const dailyKcalAssumed =
     avgRecentKcal ?? profile.dailyCalorieTarget ?? null;
   const planProjection =
-    profile.targetWeightMaxLb != null &&
+    targetBoundaryLb != null &&
     anchorWeight != null &&
     tdeeVal != null &&
     dailyKcalAssumed != null
@@ -106,7 +116,8 @@ export default async function DashboardPage({
           anchorWeightLb: anchorWeight,
           tdeeKcal: tdeeVal,
           dailyKcal: dailyKcalAssumed,
-          targetMaxLb: profile.targetWeightMaxLb,
+          targetMaxLb: targetBoundaryLb,
+          mode,
         })
       : null;
   void ACTIVITY_LEVELS; // ensures import is preserved if we later expose it
@@ -115,29 +126,30 @@ export default async function DashboardPage({
   // do they need to eat / lose per week to make it.
   const requiredPaceResult =
     profile.targetDate != null &&
-    profile.targetWeightMaxLb != null &&
+    targetBoundaryLb != null &&
     anchorWeight != null &&
     tdeeVal != null
       ? requiredPace({
           anchorDate: today,
           anchorWeightLb: anchorWeight,
           targetDate: profile.targetDate,
-          targetMaxLb: profile.targetWeightMaxLb,
+          targetMaxLb: targetBoundaryLb,
           tdeeKcal: tdeeVal,
+          mode,
         })
       : null;
   // Build a 2-point "required" line for the chart from (today, current) to
-  // (targetDate, targetMaxLb) — only when we have a sensible required pace.
+  // (targetDate, targetBoundaryLb) — only when we have a sensible required pace.
   const requiredLine =
     requiredPaceResult &&
     requiredPaceResult.pace !== 'past' &&
     requiredPaceResult.pace !== 'already-there' &&
     profile.targetDate != null &&
-    profile.targetWeightMaxLb != null &&
+    targetBoundaryLb != null &&
     anchorWeight != null
       ? [
           { date: today, weightLb: anchorWeight },
-          { date: profile.targetDate, weightLb: profile.targetWeightMaxLb },
+          { date: profile.targetDate, weightLb: targetBoundaryLb },
         ]
       : null;
 
@@ -162,6 +174,7 @@ export default async function DashboardPage({
         avgRecentKcal={avgRecentKcal}
         tdeeKcal={tdeeVal}
         requiredPace={requiredPaceResult}
+        mode={mode}
       />
 
       <WeightChart
@@ -176,7 +189,12 @@ export default async function DashboardPage({
         targetMaxLb={profile.targetWeightMaxLb}
         heightIn={profile.heightIn}
         todayIso={today}
+        mode={mode}
       />
+
+      {mode === 'build' ? (
+        <RecentPrs prs={recentPrs} />
+      ) : null}
     </div>
   );
 }

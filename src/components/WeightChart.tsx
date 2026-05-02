@@ -14,6 +14,7 @@ import {
   YAxis,
 } from 'recharts';
 import { formatShortDate } from '@/lib/dateUtils';
+import type { GoalMode } from '@/lib/types';
 import { formatWeight, weightLbForBmi } from '@/lib/units';
 
 export interface WeightChartProps {
@@ -38,6 +39,7 @@ export interface WeightChartProps {
   targetMaxLb: number | null;
   heightIn: number | null;
   todayIso: string;
+  mode: GoalMode;
 }
 
 interface BmiBand {
@@ -327,7 +329,11 @@ export default function WeightChart(props: WeightChartProps) {
             <Line
               type="linear"
               dataKey="healthy"
-              name="Max healthy loss"
+              name={
+                props.mode === 'build'
+                  ? 'Lean gain rate'
+                  : 'Max healthy loss'
+              }
               stroke="#94a3b8"
               strokeWidth={1.5}
               strokeDasharray="4 4"

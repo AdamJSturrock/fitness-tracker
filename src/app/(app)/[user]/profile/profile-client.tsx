@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Profile } from '@/lib/types';
+import type { GoalMode, Profile } from '@/lib/types';
 import {
   ACTIVITY_LEVELS,
   type ActivityLevel,
@@ -32,7 +32,11 @@ interface FormState {
   targetDate: string;
   dailyCalorieTarget: string;
   dailyStepTarget: string;
+  proteinTargetG: string;
+  mode: GoalMode;
   activityLevel: ActivityLevel;
+  /** Signed change rate, lb/week. Positive in loss mode (e.g. 1 = lose 1 lb/wk),
+   *  negative in build mode (e.g. -0.5 = gain ½ lb/wk). 0 = maintain. */
   goalLossLbPerWeek: string;
 }
 
@@ -51,8 +55,10 @@ function initialState(p: Profile): FormState {
     targetDate: p.targetDate ?? '',
     dailyCalorieTarget: fmtNum(p.dailyCalorieTarget),
     dailyStepTarget: fmtNum(p.dailyStepTarget),
+    proteinTargetG: fmtNum(p.proteinTargetG),
+    mode: p.mode,
     activityLevel: 'light',
-    goalLossLbPerWeek: '1',
+    goalLossLbPerWeek: p.mode === 'build' ? '-0.5' : '1',
   };
 }
 
@@ -94,11 +100,17 @@ export default function ProfileClient({
     sex: profile.sex,
   });
   const tdeeVal = tdee(bmrVal, form.activityLevel);
-  const goalLoss = (() => {
+  const goalChange = (() => {
     const n = Number(form.goalLossLbPerWeek);
-    return Number.isFinite(n) && n >= 0 ? n : 0;
+    return Number.isFinite(n) ? n : 0;
   })();
-  const suggestedKcal = calorieTargetForGoal(tdeeVal, goalLoss);
+  const suggestedKcal = calorieTargetForGoal(tdeeVal, goalChange);
+  // Default protein suggestion: ~0.8 g per lb bodyweight in build mode,
+  // ~0.7 g/lb in loss mode. Drops to nothing when we don't have a weight yet.
+  const proteinSuggestionG =
+    liveWeight != null && liveWeight > 0
+      ? Math.round(liveWeight * (form.mode === 'build' ? 0.8 : 0.7))
+      : null;
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((s) => ({ ...s, [key]: value }));
@@ -116,6 +128,21 @@ export default function ProfileClient({
   function applySuggestedKcal() {
     if (suggestedKcal == null) return;
     setForm((s) => ({ ...s, dailyCalorieTarget: String(suggestedKcal) }));
+  }
+
+  function applySuggestedProtein() {
+    if (proteinSuggestionG == null) return;
+    setForm((s) => ({ ...s, proteinTargetG: String(proteinSuggestionG) }));
+  }
+
+  function setMode(next: GoalMode) {
+    setForm((s) => ({
+      ...s,
+      mode: next,
+      // Reset the per-week selector to a sensible default for the mode so the
+      // calorie suggestion below stays believable across mode flips.
+      goalLossLbPerWeek: next === 'build' ? '-0.5' : '1',
+    }));
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -161,6 +188,8 @@ export default function ProfileClient({
         targetDate: form.targetDate.trim() === '' ? null : form.targetDate.trim(),
         dailyCalorieTarget: intOrNull(form.dailyCalorieTarget),
         dailyStepTarget: intOrNull(form.dailyStepTarget),
+        mode: form.mode,
+        proteinTargetG: intOrNull(form.proteinTargetG),
       };
       await updateProfile(payload);
       setSavedAt(Date.now());
@@ -187,6 +216,26 @@ export default function ProfileClient({
           {profile.displayName}
         </p>
       </div>
+
+      <fieldset className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Goal mode
+        </legend>
+        <div className="grid grid-cols-2 gap-2">
+          <ModeOption
+            checked={form.mode === 'loss'}
+            onChange={() => setMode('loss')}
+            label="Lose weight"
+            help="Eat below TDEE; aim for the upper bound of your target band."
+          />
+          <ModeOption
+            checked={form.mode === 'build'}
+            onChange={() => setMode('build')}
+            label="Build muscle"
+            help="Eat above TDEE; lean gain rate ≤ ½ lb/week to minimise fat."
+          />
+        </div>
+      </fieldset>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Height">
@@ -326,6 +375,33 @@ export default function ProfileClient({
             className={inputCls}
           />
         </Field>
+        <Field label="Daily protein target (g)">
+          <input
+            type="text"
+            inputMode="numeric"
+            value={form.proteinTargetG}
+            onChange={(e) =>
+              update('proteinTargetG', e.target.value.replace(/[^0-9]/g, ''))
+            }
+            className={inputCls}
+          />
+          <div className="mt-1 flex items-center justify-between gap-2 text-xs text-slate-500">
+            <span>
+              {proteinSuggestionG != null
+                ? `Suggested ≈ ${proteinSuggestionG} g (${form.mode === 'build' ? '0.8' : '0.7'} g/lb)`
+                : 'Suggested rate: 0.7 g/lb (loss) · 0.8 g/lb (build).'}
+            </span>
+            {proteinSuggestionG != null ? (
+              <button
+                type="button"
+                onClick={applySuggestedProtein}
+                className="inline-flex h-7 items-center rounded-md border border-slate-300 bg-white px-2 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                Use {proteinSuggestionG}g
+              </button>
+            ) : null}
+          </div>
+        </Field>
 
         <div className="sm:col-span-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
@@ -361,18 +437,28 @@ export default function ProfileClient({
             </label>
             <label className="block">
               <span className="block text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
-                Goal
+                {form.mode === 'build' ? 'Gain rate' : 'Goal'}
               </span>
               <select
                 value={form.goalLossLbPerWeek}
                 onChange={(e) => update('goalLossLbPerWeek', e.target.value)}
                 className="mt-1 block h-10 w-full rounded-md border border-emerald-300 bg-white px-2 text-sm text-slate-900"
               >
-                <option value="0">Maintain weight</option>
-                <option value="0.5">Lose ½ lb / week</option>
-                <option value="1">Lose 1 lb / week</option>
-                <option value="1.5">Lose 1½ lb / week</option>
-                <option value="2">Lose 2 lb / week (aggressive)</option>
+                {form.mode === 'build' ? (
+                  <>
+                    <option value="-0.25">Gain ¼ lb / week (lean)</option>
+                    <option value="-0.5">Gain ½ lb / week</option>
+                    <option value="-1">Gain 1 lb / week (aggressive)</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="0">Maintain weight</option>
+                    <option value="0.5">Lose ½ lb / week</option>
+                    <option value="1">Lose 1 lb / week</option>
+                    <option value="1.5">Lose 1½ lb / week</option>
+                    <option value="2">Lose 2 lb / week (aggressive)</option>
+                  </>
+                )}
               </select>
             </label>
           </div>
@@ -441,6 +527,41 @@ function Field({
     <label className="block">
       <span className="block text-sm font-medium text-slate-700">{label}</span>
       {children}
+    </label>
+  );
+}
+
+function ModeOption({
+  checked,
+  onChange,
+  label,
+  help,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: string;
+  help: string;
+}) {
+  return (
+    <label
+      className={
+        'flex cursor-pointer flex-col gap-1 rounded-lg border p-3 transition ' +
+        (checked
+          ? 'border-emerald-500 bg-white shadow-sm ring-2 ring-emerald-200'
+          : 'border-slate-200 bg-white hover:border-slate-300')
+      }
+    >
+      <span className="flex items-center gap-2">
+        <input
+          type="radio"
+          name="goal-mode"
+          checked={checked}
+          onChange={onChange}
+          className="h-4 w-4 accent-emerald-600"
+        />
+        <span className="text-sm font-semibold text-slate-900">{label}</span>
+      </span>
+      <span className="pl-6 text-xs text-slate-500">{help}</span>
     </label>
   );
 }

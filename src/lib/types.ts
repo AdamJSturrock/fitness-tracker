@@ -7,6 +7,8 @@ export type UserName = 'adam' | 'anna' | 'demo';
 /** Single source of truth for the valid `[user]` URL segments. */
 export const VALID_USERS: readonly UserName[] = ['adam', 'anna', 'demo'];
 
+export type GoalMode = 'loss' | 'build';
+
 export interface Profile {
   id: number;
   name: UserName;
@@ -22,6 +24,10 @@ export interface Profile {
   targetDate: string | null; // YYYY-MM-DD
   dailyCalorieTarget: number | null;
   dailyStepTarget: number | null;
+  /** 'loss' = weight-loss mode (calorie deficit); 'build' = muscle-build mode (surplus). */
+  mode: GoalMode;
+  /** Optional daily protein target in grams. Mainly relevant in build mode. */
+  proteinTargetG: number | null;
 }
 
 export interface Entry {
@@ -142,4 +148,32 @@ export interface ExerciseLogWithExercise extends ExerciseLog {
 export interface TodayRoutineRow {
   routineExercise: RoutineExerciseWithExercise;
   log: ExerciseLog | null;
+  /** Most recent prior performance snapshot for this exercise, if any. */
+  lastSnapshot: PerformanceSnapshot | null;
+}
+
+/**
+ * One row per (user, exercise, date) summarising the strength work done that
+ * day. Refreshed automatically whenever an exercise_log row is written.
+ *
+ * `e1rm` is the Epley estimated 1-rep-max: weight × (1 + reps/30).
+ * `isPr` is true when this snapshot's e1rm beats every earlier snapshot for
+ * the same (user, exercise).
+ */
+export interface PerformanceSnapshot {
+  id: number;
+  userId: number;
+  exerciseId: number;
+  date: string; // YYYY-MM-DD
+  topWeightLb: number | null;
+  topReps: number | null;
+  totalVolumeLb: number | null;
+  totalSets: number | null;
+  e1rm: number | null;
+  isPr: boolean;
+  createdAt: string;
+}
+
+export interface PerformanceSnapshotWithExercise extends PerformanceSnapshot {
+  exercise: Exercise;
 }

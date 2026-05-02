@@ -33,6 +33,8 @@ export const mockProfiles: Record<UserName, Profile> = {
     targetDate: null,
     dailyCalorieTarget: 2200,
     dailyStepTarget: 10000,
+    mode: 'loss',
+    proteinTargetG: null,
   },
   anna: {
     id: 2,
@@ -48,6 +50,8 @@ export const mockProfiles: Record<UserName, Profile> = {
     targetDate: null,
     dailyCalorieTarget: 1700,
     dailyStepTarget: 10000,
+    mode: 'loss',
+    proteinTargetG: null,
   },
   demo: {
     id: 3,
@@ -63,6 +67,8 @@ export const mockProfiles: Record<UserName, Profile> = {
     targetDate: null,
     dailyCalorieTarget: 2000,
     dailyStepTarget: 10000,
+    mode: 'loss',
+    proteinTargetG: null,
   },
 };
 

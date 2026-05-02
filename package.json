@@ -11,6 +11,7 @@
     "seed:fake": "tsx scripts/seed-fake.ts",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "smoke": "tsx scripts/smoke.ts",
+    "backfill:snapshots": "tsx scripts/backfill-snapshots.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

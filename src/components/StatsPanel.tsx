@@ -1,4 +1,4 @@
-import type { Entry, Profile } from '@/lib/types';
+import type { Entry, GoalMode, Profile } from '@/lib/types';
 import {
   type CaloriePaceProjection,
   currentSmoothedWeight,
@@ -25,6 +25,7 @@ export interface StatsPanelProps {
   tdeeKcal: number | null;
   /** Required pace to hit the user's target_date — null if no targetDate set. */
   requiredPace: RequiredPace | null;
+  mode: GoalMode;
 }
 
 type Tone = 'neutral' | 'primary' | 'good' | 'bad';
@@ -56,8 +57,16 @@ function formatDateLong(iso: string): string {
 function caloriesTone(
   todaysCalories: number,
   target: number | null,
+  mode: GoalMode,
 ): Tone {
   if (target == null) return 'neutral';
+  if (mode === 'build') {
+    // Build mode: under-eating is the failure; sitting on target is good;
+    // over-eating beyond +200 starts depositing as fat.
+    if (todaysCalories < target - 150) return 'bad';
+    if (todaysCalories > target + 250) return 'neutral';
+    return 'good';
+  }
   if (todaysCalories > target + 200) return 'bad';
   if (todaysCalories > target) return 'neutral';
   return 'good';
@@ -80,7 +89,14 @@ export default function StatsPanel({
   avgRecentKcal,
   tdeeKcal,
   requiredPace,
+  mode,
 }: StatsPanelProps) {
+  const isBuild = mode === 'build';
+  // The boundary the projection aims at: upper bound for loss, lower bound
+  // (the floor you climb above) for build.
+  const targetBoundaryLb = isBuild
+    ? profile.targetWeightMinLb
+    : profile.targetWeightMaxLb;
   // Build the smoothed series.
   const filtered: DatedWeight[] = entries
     .filter(
@@ -99,20 +115,25 @@ export default function StatsPanel({
       : null;
   const wkly = weeklyAverageLoss(ma);
 
-  // Projection: only when we have a target max + ≥7 distinct points.
+  // Projection: only when we have a target boundary + ≥7 distinct points.
   const projection =
-    profile.targetWeightMaxLb != null && filtered.length > 0
+    targetBoundaryLb != null && filtered.length > 0
       ? projectWeight({
           maSeries: ma,
           today:
             ma.length > 0 ? ma[ma.length - 1].date : entries[0]?.date ?? '',
-          targetWeightMaxLb: profile.targetWeightMaxLb,
+          targetWeightMaxLb: targetBoundaryLb,
+          mode,
         })
       : null;
 
-  // BMI=25 (top of healthy range) projected reach date.
+  // Healthy-BMI projection: in loss mode we project down to BMI=25; in build
+  // mode we project up to BMI=18.5 (the floor) so an underweight user climbing
+  // out of underweight has the same "ETA to healthy" stat.
   const healthyBmiCutoffLb =
-    profile.heightIn !== null ? weightLbForBmi(25, profile.heightIn) : null;
+    profile.heightIn !== null
+      ? weightLbForBmi(isBuild ? 18.5 : 25, profile.heightIn)
+      : null;
   const bmiProjection =
     healthyBmiCutoffLb !== null && filtered.length > 0
       ? projectWeight({
@@ -120,6 +141,7 @@ export default function StatsPanel({
           today:
             ma.length > 0 ? ma[ma.length - 1].date : entries[0]?.date ?? '',
           targetWeightMaxLb: healthyBmiCutoffLb,
+          mode,
         })
       : null;
 
@@ -130,13 +152,65 @@ export default function StatsPanel({
   const alreadyHealthyBmi =
     current !== null &&
     healthyBmiCutoffLb !== null &&
-    current <= healthyBmiCutoffLb;
+    (isBuild ? current >= healthyBmiCutoffLb : current <= healthyBmiCutoffLb);
+
+  const remaining = targetRemaining({
+    current,
+    targetMinLb: profile.targetWeightMinLb,
+    targetMaxLb: profile.targetWeightMaxLb,
+    mode,
+  });
 
   return (
     <section
       aria-label="Stats"
       className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
     >
+      <Card
+        label="Target remaining"
+        tone={
+          remaining.kind === 'inside'
+            ? 'good'
+            : remaining.kind === 'range'
+              ? 'primary'
+              : 'neutral'
+        }
+      >
+        {remaining.kind === 'range' ? (
+          <>
+            <Big
+              value={
+                remaining.minLb === remaining.maxLb
+                  ? `${remaining.minLb.toFixed(1)} lb`
+                  : `${remaining.minLb.toFixed(1)} – ${remaining.maxLb.toFixed(1)} lb`
+              }
+            />
+            <Sub>
+              {isBuild ? 'to gain into target band' : 'to lose into target band'}
+            </Sub>
+          </>
+        ) : remaining.kind === 'inside' ? (
+          <>
+            <Big value="In target band ✓" />
+            <Sub>
+              {isBuild
+                ? 'Above the floor — hold or build above'
+                : 'You’re inside the target range'}
+            </Sub>
+          </>
+        ) : remaining.kind === 'no-weight' ? (
+          <>
+            <Big value="—" />
+            <Sub>Log a weight to see this</Sub>
+          </>
+        ) : (
+          <>
+            <Big value="—" />
+            <Sub>Set a target weight on Profile</Sub>
+          </>
+        )}
+      </Card>
+
       <Card label="Current weight" tone="primary">
         <Big value={formatWeight(current)} />
         {profile.targetWeightMinLb != null && profile.targetWeightMaxLb != null ? (
@@ -154,11 +228,17 @@ export default function StatsPanel({
         tone={
           change === null
             ? 'neutral'
-            : change.lb > 0
-              ? 'good' // lost weight (positive lb in stats convention)
-              : change.lb < 0
-                ? 'bad'
-                : 'neutral'
+            : isBuild
+              ? change.lb < 0
+                ? 'good' // gained weight (negative lb in loss-convention = gain)
+                : change.lb > 0
+                  ? 'bad'
+                  : 'neutral'
+              : change.lb > 0
+                ? 'good'
+                : change.lb < 0
+                  ? 'bad'
+                  : 'neutral'
         }
       >
         <Big
@@ -177,12 +257,12 @@ export default function StatsPanel({
         </Sub>
       </Card>
 
-      <Card label="Weekly avg loss">
+      <Card label={isBuild ? 'Weekly avg gain' : 'Weekly avg loss'}>
         <Big
           value={
             wkly === 0 && ma.length < 2
               ? '—'
-              : `${wkly.toFixed(2)} lb/wk`
+              : `${(isBuild ? -wkly : wkly).toFixed(2)} lb/wk`
           }
         />
         <Sub>Last 4 wks of MA</Sub>
@@ -200,12 +280,18 @@ export default function StatsPanel({
         />
         <Sub>
           {planProjection
-            ? `Plan · ${(-planProjection.slopeLbPerWeek).toFixed(2)} lb/wk` +
-              (planProjection.dailyDeficitKcal > 0
-                ? ` · ${Math.round(planProjection.dailyDeficitKcal)} kcal/day deficit`
-                : ' · no deficit')
-            : profile.targetWeightMaxLb == null
-              ? 'Set a target weight'
+            ? `Plan · ${(isBuild ? planProjection.slopeLbPerWeek : -planProjection.slopeLbPerWeek).toFixed(2)} lb/wk` +
+              (isBuild
+                ? planProjection.dailyDeficitKcal < 0
+                  ? ` · ${Math.round(-planProjection.dailyDeficitKcal)} kcal/day surplus`
+                  : ' · no surplus'
+                : planProjection.dailyDeficitKcal > 0
+                  ? ` · ${Math.round(planProjection.dailyDeficitKcal)} kcal/day deficit`
+                  : ' · no deficit')
+            : targetBoundaryLb == null
+              ? isBuild
+                ? 'Set a target weight floor'
+                : 'Set a target weight'
               : profile.heightIn == null ||
                   profile.age == null ||
                   (anchorWeightForPlan(profile, ma) == null)
@@ -257,7 +343,7 @@ export default function StatsPanel({
 
       <Card
         label="Today's calories"
-        tone={caloriesTone(todaysCalories, profile.dailyCalorieTarget)}
+        tone={caloriesTone(todaysCalories, profile.dailyCalorieTarget, mode)}
       >
         <Big
           value={
@@ -296,8 +382,10 @@ export default function StatsPanel({
             <>
               <Big value={`${Math.round(requiredPace.dailyIntakeKcal)} kcal/day`} />
               <Sub>
-                {requiredPace.lbPerWeek.toFixed(2)} lb/wk pace ·{' '}
-                {Math.round(requiredPace.dailyDeficitKcal)} kcal deficit
+                {requiredPace.lbPerWeek.toFixed(2)} lb/wk{' '}
+                {isBuild ? 'gain' : 'loss'} ·{' '}
+                {Math.round(requiredPace.dailyDeficitKcal)} kcal{' '}
+                {isBuild ? 'surplus' : 'deficit'}
               </Sub>
               <p className="mt-1 text-[11px] text-slate-500">
                 {requiredPace.pace === 'easy'
@@ -305,8 +393,12 @@ export default function StatsPanel({
                   : requiredPace.pace === 'moderate'
                     ? 'Moderate pace — sustainable.'
                     : requiredPace.pace === 'aggressive'
-                      ? 'Aggressive — keep an eye on energy levels.'
-                      : 'Too aggressive — over 2 lb/wk is not recommended. Push the date out.'}
+                      ? isBuild
+                        ? 'Aggressive — extra calories above ½ lb/wk tend to deposit as fat.'
+                        : 'Aggressive — keep an eye on energy levels.'
+                      : isBuild
+                        ? 'Too aggressive — gaining over 1 lb/wk is mostly fat. Push the date out.'
+                        : 'Too aggressive — over 2 lb/wk is not recommended. Push the date out.'}
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
                 {requiredPace.daysAvailable} day
@@ -367,4 +459,44 @@ function Big({ value }: { value: string }) {
 
 function Sub({ children }: { children: React.ReactNode }) {
   return <p className="mt-0.5 text-xs text-slate-500">{children}</p>;
+}
+
+type Remaining =
+  | { kind: 'no-target' }
+  | { kind: 'no-weight' }
+  | { kind: 'inside' }
+  | { kind: 'range'; minLb: number; maxLb: number };
+
+function targetRemaining({
+  current,
+  targetMinLb,
+  targetMaxLb,
+  mode,
+}: {
+  current: number | null;
+  targetMinLb: number | null;
+  targetMaxLb: number | null;
+  mode: GoalMode;
+}): Remaining {
+  if (targetMinLb == null || targetMaxLb == null) return { kind: 'no-target' };
+  if (current == null) return { kind: 'no-weight' };
+  // Inside the band counts as "done" in either mode.
+  if (current >= targetMinLb && current <= targetMaxLb) return { kind: 'inside' };
+  if (mode === 'build') {
+    // Below the floor → need to climb. Above the ceiling → already past target,
+    // treat as done from this card's perspective.
+    if (current >= targetMaxLb) return { kind: 'inside' };
+    return {
+      kind: 'range',
+      minLb: targetMinLb - current,
+      maxLb: targetMaxLb - current,
+    };
+  }
+  // Loss mode: above the ceiling → still need to lose. Below the floor → done.
+  if (current <= targetMinLb) return { kind: 'inside' };
+  return {
+    kind: 'range',
+    minLb: current - targetMaxLb,
+    maxLb: current - targetMinLb,
+  };
 }

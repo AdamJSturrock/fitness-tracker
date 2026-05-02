@@ -8,6 +8,7 @@ import {
   getMealItemWithFoodById,
   getProfile,
 } from '@/server/queries';
+import { refreshPerformanceSnapshot as refreshSnapshotShared } from '@/server/snapshots';
 import type {
   Entry,
   Exercise,
@@ -83,6 +84,8 @@ async function userNameById(id: number): Promise<UserName> {
 
 // ---------- updateProfile ----------
 
+const goalModeEnum = z.enum(['loss', 'build']);
+
 const updateProfileSchema = z.object({
   name: userNameEnum,
   heightIn: z.number().positive().nullable().optional(),
@@ -95,6 +98,8 @@ const updateProfileSchema = z.object({
   targetDate: dateString.nullable().optional(),
   dailyCalorieTarget: z.number().int().positive().nullable().optional(),
   dailyStepTarget: z.number().int().positive().nullable().optional(),
+  mode: goalModeEnum.optional(),
+  proteinTargetG: z.number().int().positive().nullable().optional(),
 });
 
 export async function updateProfile(input: unknown): Promise<Profile> {
@@ -123,6 +128,9 @@ export async function updateProfile(input: unknown): Promise<Profile> {
     push('daily_calorie_target', data.dailyCalorieTarget ?? null);
   if ('dailyStepTarget' in data)
     push('daily_step_target', data.dailyStepTarget ?? null);
+  if ('mode' in data && data.mode !== undefined) push('mode', data.mode);
+  if ('proteinTargetG' in data)
+    push('protein_target_g', data.proteinTargetG ?? null);
 
   if (sets.length > 0) {
     const db = getDb();
@@ -449,6 +457,14 @@ export async function removeMealItem(id: number): Promise<void> {
     const name = await userNameById(Number(row.user_id));
     revalidateMealPaths(name);
   }
+}
+
+async function refreshPerformanceSnapshot(
+  userId: number,
+  exerciseId: number,
+  date: string,
+): Promise<void> {
+  await refreshSnapshotShared(getDb(), userId, exerciseId, date);
 }
 
 // ============================================================
@@ -982,6 +998,7 @@ export async function tickRoutineExercise(
     });
     logId = Number(ins.rows[0].id);
   }
+  await refreshPerformanceSnapshot(data.userId, exerciseId, data.date);
   const log = await getExerciseLogById(logId);
   const name = await userNameById(data.userId);
   revalidateWorkoutPathsForUser(name);
@@ -1013,6 +1030,11 @@ export async function untickRoutineExercise(input: unknown): Promise<void> {
              AND exercise_id = ? AND routine_id = ?`,
     args: [data.userId, data.date, Number(re.exercise_id), Number(re.routine_id)],
   });
+  await refreshPerformanceSnapshot(
+    data.userId,
+    Number(re.exercise_id),
+    data.date,
+  );
   const name = await userNameById(data.userId);
   revalidateWorkoutPathsForUser(name);
 }
@@ -1054,6 +1076,7 @@ export async function updateExerciseLog(
     });
   }
   const log = await getExerciseLogById(data.id);
+  await refreshPerformanceSnapshot(log.userId, log.exerciseId, log.date);
   const name = await userNameById(log.userId);
   revalidateWorkoutPathsForUser(name);
   return log;
@@ -1091,6 +1114,7 @@ export async function logExercise(
     ],
   });
   const log = await getExerciseLogById(Number(ins.rows[0].id));
+  await refreshPerformanceSnapshot(data.userId, data.exerciseId, data.date);
   const name = await userNameById(data.userId);
   revalidateWorkoutPathsForUser(name);
   return log;
@@ -1104,7 +1128,7 @@ export async function removeExerciseLog(id: number): Promise<void> {
   );
   const db = getDb();
   const lookup = await db.execute({
-    sql: 'SELECT user_id FROM exercise_logs WHERE id = ?',
+    sql: 'SELECT user_id, exercise_id, date FROM exercise_logs WHERE id = ?',
     args: [parsed],
   });
   await db.execute({
@@ -1112,7 +1136,11 @@ export async function removeExerciseLog(id: number): Promise<void> {
     args: [parsed],
   });
   if (lookup.rows[0]) {
-    const name = await userNameById(Number(lookup.rows[0].user_id));
+    const userId = Number(lookup.rows[0].user_id);
+    const exerciseId = Number(lookup.rows[0].exercise_id);
+    const date = String(lookup.rows[0].date);
+    await refreshPerformanceSnapshot(userId, exerciseId, date);
+    const name = await userNameById(userId);
     revalidateWorkoutPathsForUser(name);
   }
 }

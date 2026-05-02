@@ -128,6 +128,27 @@ const STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   `CREATE INDEX IF NOT EXISTS exercise_logs_user_date_idx ON exercise_logs(user_id, date)`,
+  // ---- Phase 3: muscle-building mode (performance snapshots) ----
+  // One row per (user, exercise, date) summarising that day's work for the
+  // exercise. Recomputed whenever an exercise_log is written for the same
+  // (user, exercise, date). Lets the UI show "last time: 3×8 @ 95 lb" and PR
+  // history without re-querying exercise_logs from scratch each render.
+  `CREATE TABLE IF NOT EXISTS performance_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    exercise_id INTEGER NOT NULL REFERENCES exercises(id),
+    date TEXT NOT NULL,
+    top_weight_lb REAL,
+    top_reps INTEGER,
+    total_volume_lb REAL,
+    total_sets INTEGER,
+    e1rm REAL,
+    is_pr INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (user_id, exercise_id, date)
+  )`,
+  `CREATE INDEX IF NOT EXISTS performance_snapshots_user_ex_date_idx
+     ON performance_snapshots(user_id, exercise_id, date)`,
 ];
 
 async function main() {
@@ -167,6 +188,9 @@ async function main() {
   await tryAddColumn('exercise_logs', 'duration_min', 'REAL');
   await tryAddColumn('exercise_logs', 'distance_mi', 'REAL');
   await tryAddColumn('exercise_logs', 'kcal_machine', 'INTEGER');
+  // Phase 3: muscle-building mode + protein target.
+  await tryAddColumn('users', 'mode', "TEXT NOT NULL DEFAULT 'loss'");
+  await tryAddColumn('users', 'protein_target_g', 'INTEGER');
 
   // Seed an Elliptical exercise with the 0.67 correction factor so it's
   // available in the shared library without anyone having to add it.

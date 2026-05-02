@@ -11,21 +11,34 @@ import {
   listRoutines,
 } from '@/server/queries';
 import { todayIso } from '@/lib/dateUtils';
+import DateSwitcher from '@/components/DateSwitcher';
 import TodayClient from './today-client';
 
 const VALID_USERS: readonly UserName[] = ['adam', 'anna', 'demo'];
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 export default async function TodayPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ user: string }>;
+  searchParams: Promise<{ date?: string | string[] }>;
 }) {
   const { user } = await params;
   if (!VALID_USERS.includes(user as UserName)) notFound();
   const name = user as UserName;
 
   const profile = await getProfile(name);
-  const date = todayIso();
+  const today = todayIso();
+  const sp = await searchParams;
+  const requested = Array.isArray(sp.date) ? sp.date[0] : sp.date;
+  // Accept any past or current YYYY-MM-DD; future dates and garbage fall back to today.
+  const date =
+    requested && ISO_DATE.test(requested) && requested <= today
+      ? requested
+      : today;
+  const isToday = date === today;
 
   const [meals, foods, recentFoods, entries, todayRoutine, streak, allRoutines] =
     await Promise.all([
@@ -45,9 +58,11 @@ export default async function TodayPage({
       <header>
         <h1 className="text-xl font-bold text-slate-900">{formatHeading(date)}</h1>
         <p className="text-sm text-slate-500">
-          {profile.displayName}&rsquo;s daily check-in
+          {profile.displayName}&rsquo;s {isToday ? 'daily check-in' : 'log entry'}
         </p>
       </header>
+
+      <DateSwitcher userSegment={name} date={date} todayIso={today} />
 
       <TodayClient
         userId={profile.id}

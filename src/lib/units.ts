@@ -110,19 +110,20 @@ export function tdee(
 }
 
 /**
- * Daily calorie target = TDEE − (3500 × lossLbPerWeek / 7).
- * lossLbPerWeek = 0 means maintenance. Negative is rejected.
- * Returns null if tdee is null. Floors at 1200 kcal (loose minimum
- * floor recommended for adult women; below this requires medical
- * supervision).
+ * Daily calorie target = TDEE − (3500 × changeLbPerWeek / 7).
+ *
+ * `changeLbPerWeek` is signed: positive = lose, 0 = maintain, negative = gain
+ * (build mode adds calories rather than subtracting). Returns null if tdee
+ * is null or input is non-finite. Floors at 1200 kcal (the loose minimum
+ * for adult women; below that requires medical supervision).
  */
 export function calorieTargetForGoal(
   tdeeKcal: number | null,
-  lossLbPerWeek: number,
+  changeLbPerWeek: number,
 ): number | null {
   if (tdeeKcal == null || !Number.isFinite(tdeeKcal)) return null;
-  if (!Number.isFinite(lossLbPerWeek) || lossLbPerWeek < 0) return null;
-  const deficit = (3500 * lossLbPerWeek) / 7;
+  if (!Number.isFinite(changeLbPerWeek)) return null;
+  const deficit = (3500 * changeLbPerWeek) / 7;
   return Math.max(1200, Math.round(tdeeKcal - deficit));
 }
 
