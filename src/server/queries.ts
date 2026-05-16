@@ -21,6 +21,9 @@ import type {
   RoutineWithExercises,
   TodayRoutineRow,
   UserName,
+  WalkingRoute,
+  WalkLogWithRoute,
+  WalkPace,
 } from '@/lib/types';
 
 // Wave 2 Agent B: real Turso-backed read queries.
@@ -438,6 +441,11 @@ function rowToExerciseLog(r: Row): ExerciseLog {
     durationMin: toNumOrNull(r.duration_min),
     distanceMi: toNumOrNull(r.distance_mi),
     kcalMachine: toIntOrNull(r.kcal_machine),
+    walkingRouteId:
+      r.walking_route_id === null || r.walking_route_id === undefined
+        ? null
+        : Number(r.walking_route_id),
+    walkPace: (r.walk_pace as WalkPace | null) ?? null,
     notes: toStringOrNull(r.notes),
     createdAt: String(r.created_at),
   };
@@ -560,6 +568,7 @@ export async function getExerciseLogsForDate(
     sql: `SELECT exercise_logs.id, exercise_logs.user_id, exercise_logs.date,
                  exercise_logs.exercise_id, exercise_logs.routine_id,
                  exercise_logs.sets, exercise_logs.reps, exercise_logs.weight_lb, exercise_logs.duration_min, exercise_logs.distance_mi, exercise_logs.kcal_machine,
+                 exercise_logs.walking_route_id, exercise_logs.walk_pace,
                  exercise_logs.notes, exercise_logs.created_at,
                  ${EX_JOIN_COLUMNS}
             FROM exercise_logs
@@ -791,6 +800,7 @@ export async function getExerciseLogById(
     sql: `SELECT exercise_logs.id, exercise_logs.user_id, exercise_logs.date,
                  exercise_logs.exercise_id, exercise_logs.routine_id,
                  exercise_logs.sets, exercise_logs.reps, exercise_logs.weight_lb, exercise_logs.duration_min, exercise_logs.distance_mi, exercise_logs.kcal_machine,
+                 exercise_logs.walking_route_id, exercise_logs.walk_pace,
                  exercise_logs.notes, exercise_logs.created_at,
                  ${EX_JOIN_COLUMNS}
             FROM exercise_logs
@@ -802,4 +812,129 @@ export async function getExerciseLogById(
   const r = result.rows[0];
   if (!r) throw new Error(`ExerciseLog id=${id} not found`);
   return { ...rowToExerciseLog(r), exercise: rowToExerciseAliased(r, 'ex_') };
+}
+
+// ---- Phase 4: walking routes ----
+
+function rowToWalkingRoute(r: Row): WalkingRoute {
+  return {
+    id: Number(r.id),
+    userId: Number(r.user_id),
+    name: String(r.name),
+    distanceMi: Number(r.distance_mi),
+    elevationGainFt: toNumOrNull(r.elevation_gain_ft),
+    defaultMinutes: Number(r.default_minutes),
+    geojson: String(r.geojson),
+    archived: Number(r.archived) !== 0,
+    createdAt: String(r.created_at),
+  };
+}
+
+export async function listWalkingRoutes(
+  userId: number,
+  opts?: { includeArchived?: boolean },
+): Promise<WalkingRoute[]> {
+  const db = getDb();
+  const includeArchived = opts?.includeArchived ?? false;
+  const result = await db.execute({
+    sql: `SELECT id, user_id, name, distance_mi, elevation_gain_ft,
+                 default_minutes, geojson, archived, created_at
+            FROM walking_routes
+           WHERE user_id = ?${includeArchived ? '' : ' AND archived = 0'}
+           ORDER BY name COLLATE NOCASE ASC, id ASC`,
+    args: [userId],
+  });
+  return result.rows.map(rowToWalkingRoute);
+}
+
+export async function getWalkingRouteById(id: number): Promise<WalkingRoute> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT id, user_id, name, distance_mi, elevation_gain_ft,
+                 default_minutes, geojson, archived, created_at
+            FROM walking_routes WHERE id = ? LIMIT 1`,
+    args: [id],
+  });
+  const row = result.rows[0];
+  if (!row) throw new Error(`Route id=${id} not found`);
+  return rowToWalkingRoute(row);
+}
+
+let cachedDogWalkExerciseId: number | null = null;
+
+export async function getDogWalkExerciseId(): Promise<number> {
+  if (cachedDogWalkExerciseId !== null) return cachedDogWalkExerciseId;
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT id FROM exercises WHERE name = 'Dog walk' LIMIT 1`,
+    args: [],
+  });
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(
+      `Dog walk exercise not found. Run \`pnpm migrate\` to seed exercises.`,
+    );
+  }
+  cachedDogWalkExerciseId = Number(row.id);
+  return cachedDogWalkExerciseId;
+}
+
+export async function getWalkLogsForDate(
+  userId: number,
+  date: string,
+): Promise<WalkLogWithRoute[]> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT el.id           AS id,
+                 el.user_id      AS user_id,
+                 el.date         AS date,
+                 el.duration_min AS duration_min,
+                 el.walk_pace    AS walk_pace,
+                 el.created_at   AS created_at,
+                 wr.id           AS route_id,
+                 wr.name         AS route_name
+            FROM exercise_logs el
+            INNER JOIN walking_routes wr ON wr.id = el.walking_route_id
+           WHERE el.user_id = ?
+             AND el.date = ?
+             AND el.walking_route_id IS NOT NULL
+           ORDER BY el.created_at ASC, el.id ASC`,
+    args: [userId, date],
+  });
+  return result.rows.map((r) => {
+    const paceRaw = r.walk_pace as WalkPace | null | undefined;
+    const pace: WalkPace =
+      paceRaw === 'brisk' || paceRaw === 'normal' || paceRaw === 'stoppy'
+        ? paceRaw
+        : 'normal';
+    return {
+      id: Number(r.id),
+      userId: Number(r.user_id),
+      date: String(r.date),
+      routeId: Number(r.route_id),
+      routeName: String(r.route_name),
+      durationMin: Number(r.duration_min),
+      pace,
+      createdAt: String(r.created_at),
+    };
+  });
+}
+
+export async function getLatestWeightLb(
+  userId: number,
+): Promise<number | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT weight_lb
+            FROM entries
+           WHERE user_id = ?
+             AND weight_lb IS NOT NULL
+             AND date <= date('now')
+           ORDER BY date DESC
+           LIMIT 1`,
+    args: [userId],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+  return toNumOrNull(row.weight_lb);
 }

@@ -8,6 +8,7 @@ const TABS = [
   { slug: 'dashboard', label: 'Dashboard' },
   { slug: 'today', label: 'Today' },
   { slug: 'routines', label: 'Routines' },
+  { slug: 'routes', label: 'Walks' },
   { slug: 'foods', label: 'Foods' },
   { slug: 'profile', label: 'Profile' },
 ] as const;
@@ -27,7 +28,7 @@ export default function NavTabs() {
       aria-label="Sections"
       className="mx-auto max-w-3xl px-2 pb-2 sm:px-4"
     >
-      <ul className="grid grid-cols-5 gap-1">
+      <ul className="grid grid-cols-6 gap-1">
         {TABS.map((t) => {
           const href = `/${user}/${t.slug}`;
           const active = pathname.startsWith(href);

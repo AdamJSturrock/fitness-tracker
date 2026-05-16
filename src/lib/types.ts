@@ -136,7 +136,47 @@ export interface ExerciseLog {
   distanceMi: number | null;
   /** Cardio: machine-reported calories before correction factor. */
   kcalMachine: number | null;
+  /** Walks: FK to walking_routes when this log is a dog walk. */
+  walkingRouteId: number | null;
+  /** Walks: pace tag — 'brisk' | 'normal' | 'stoppy'. */
+  walkPace: WalkPace | null;
   notes: string | null;
+  createdAt: string;
+}
+
+// ---- Phase 4: walking routes ----
+
+export type WalkPace = 'brisk' | 'normal' | 'stoppy';
+
+/**
+ * A user-defined walking route, drawn once on the map. Distance and elevation
+ * are computed at save time from the GeoJSON LineString polyline and stored so
+ * we don't have to re-fetch elevation on every render.
+ *
+ * `geojson` is a stringified GeoJSON LineString:
+ *   `{"type":"LineString","coordinates":[[lng,lat],[lng,lat],...]}`
+ */
+export interface WalkingRoute {
+  id: number;
+  userId: number;
+  name: string;
+  distanceMi: number;
+  elevationGainFt: number | null;
+  defaultMinutes: number;
+  geojson: string;
+  archived: boolean;
+  createdAt: string;
+}
+
+/** A walk log (exercise_log row with walking_route_id set) plus the route. */
+export interface WalkLogWithRoute {
+  id: number;
+  userId: number;
+  date: string;
+  routeId: number;
+  routeName: string;
+  durationMin: number;
+  pace: WalkPace;
   createdAt: string;
 }
 

@@ -4,9 +4,11 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { getDb } from '@/lib/db';
 import {
+  getDogWalkExerciseId,
   getExerciseLogById,
   getMealItemWithFoodById,
   getProfile,
+  getWalkingRouteById,
 } from '@/server/queries';
 import { refreshPerformanceSnapshot as refreshSnapshotShared } from '@/server/snapshots';
 import type {
@@ -20,6 +22,7 @@ import type {
   Routine,
   RoutineExercise,
   UserName,
+  WalkingRoute,
 } from '@/lib/types';
 
 // ---------- shared schema fragments ----------
@@ -481,6 +484,11 @@ function revalidateWorkoutPathsForUser(name: UserName) {
   revalidatePath(`/${name}/today`);
   revalidatePath(`/${name}/routines`);
   revalidatePath(`/${name}/dashboard`); // streak shows here
+}
+
+function revalidateWalkPathsForUser(name: UserName) {
+  revalidatePath(`/${name}/routes`);
+  revalidatePath(`/${name}/today`);
 }
 
 function revalidateExerciseLibrary() {
@@ -1143,5 +1151,179 @@ export async function removeExerciseLog(id: number): Promise<void> {
     const name = await userNameById(userId);
     revalidateWorkoutPathsForUser(name);
   }
+}
+
+// ============================================================
+// Phase 4: walking routes
+// ============================================================
+
+const walkPaceEnum = z.enum(['brisk', 'normal', 'stoppy']);
+
+const createWalkingRouteSchema = z.object({
+  userId: z.number().int().positive(),
+  name: z
+    .string()
+    .trim()
+    .min(1, { message: 'name must not be empty' })
+    .max(100),
+  distanceMi: z.number().positive(),
+  elevationGainFt: z.number().nullable().optional(),
+  defaultMinutes: z.number().int().positive(),
+  geojson: z.string().min(1),
+});
+
+export async function createWalkingRoute(
+  input: unknown,
+): Promise<WalkingRoute> {
+  const data = parseOrThrow(
+    createWalkingRouteSchema,
+    input,
+    'createWalkingRoute',
+  );
+  const db = getDb();
+  const result = await db.execute({
+    sql: `INSERT INTO walking_routes
+            (user_id, name, distance_mi, elevation_gain_ft,
+             default_minutes, geojson)
+          VALUES (?, ?, ?, ?, ?, ?)
+          RETURNING id`,
+    args: [
+      data.userId,
+      data.name,
+      data.distanceMi,
+      data.elevationGainFt ?? null,
+      data.defaultMinutes,
+      data.geojson,
+    ],
+  });
+  const row = result.rows[0];
+  if (!row) throw new Error('createWalkingRoute: insert did not return a row');
+  const route = await getWalkingRouteById(Number(row.id));
+  const name = await userNameById(data.userId);
+  revalidateWalkPathsForUser(name);
+  return route;
+}
+
+const updateWalkingRouteSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string().trim().min(1).max(100).optional(),
+  defaultMinutes: z.number().int().positive().optional(),
+});
+
+export async function updateWalkingRoute(
+  input: unknown,
+): Promise<WalkingRoute> {
+  const data = parseOrThrow(
+    updateWalkingRouteSchema,
+    input,
+    'updateWalkingRoute',
+  );
+  const db = getDb();
+  const sets: string[] = [];
+  const args: (string | number)[] = [];
+  if (data.name !== undefined) {
+    sets.push('name = ?');
+    args.push(data.name);
+  }
+  if (data.defaultMinutes !== undefined) {
+    sets.push('default_minutes = ?');
+    args.push(data.defaultMinutes);
+  }
+  if (sets.length > 0) {
+    args.push(data.id);
+    await db.execute({
+      sql: `UPDATE walking_routes SET ${sets.join(', ')} WHERE id = ?`,
+      args,
+    });
+  }
+  const route = await getWalkingRouteById(data.id);
+  const name = await userNameById(route.userId);
+  revalidateWalkPathsForUser(name);
+  return route;
+}
+
+export async function archiveWalkingRoute(id: number): Promise<void> {
+  const parsed = parseOrThrow(
+    z.number().int().positive(),
+    id,
+    'archiveWalkingRoute',
+  );
+  const db = getDb();
+  const lookup = await db.execute({
+    sql: 'SELECT user_id FROM walking_routes WHERE id = ? LIMIT 1',
+    args: [parsed],
+  });
+  await db.execute({
+    sql: 'UPDATE walking_routes SET archived = 1 WHERE id = ?',
+    args: [parsed],
+  });
+  if (lookup.rows[0]) {
+    const name = await userNameById(Number(lookup.rows[0].user_id));
+    revalidateWalkPathsForUser(name);
+  }
+}
+
+const logWalkSchema = z.object({
+  userId: z.number().int().positive(),
+  date: dateString,
+  walkingRouteId: z.number().int().positive(),
+  durationMin: z.number().positive(),
+  pace: walkPaceEnum,
+});
+
+export async function logWalk(input: unknown): Promise<void> {
+  const data = parseOrThrow(logWalkSchema, input, 'logWalk');
+  const route = await getWalkingRouteById(data.walkingRouteId);
+  if (route.userId !== data.userId) {
+    throw new Error(
+      `logWalk: route id=${data.walkingRouteId} does not belong to user id=${data.userId}`,
+    );
+  }
+  const exerciseId = await getDogWalkExerciseId();
+  const db = getDb();
+  await db.execute({
+    sql: `INSERT INTO exercise_logs
+            (user_id, date, exercise_id, routine_id,
+             duration_min, distance_mi,
+             walking_route_id, walk_pace)
+          VALUES (?, ?, ?, NULL, ?, ?, ?, ?)`,
+    args: [
+      data.userId,
+      data.date,
+      exerciseId,
+      data.durationMin,
+      route.distanceMi,
+      route.id,
+      data.pace,
+    ],
+  });
+  const name = await userNameById(data.userId);
+  revalidatePath(`/${name}/today`);
+}
+
+export async function removeWalkLog(id: number): Promise<void> {
+  const parsed = parseOrThrow(
+    z.number().int().positive(),
+    id,
+    'removeWalkLog',
+  );
+  const db = getDb();
+  const lookup = await db.execute({
+    sql: 'SELECT user_id, walking_route_id FROM exercise_logs WHERE id = ? LIMIT 1',
+    args: [parsed],
+  });
+  const row = lookup.rows[0];
+  if (!row) throw new Error(`removeWalkLog: exercise_log id=${parsed} not found`);
+  if (row.walking_route_id === null || row.walking_route_id === undefined) {
+    throw new Error(
+      `removeWalkLog: exercise_log id=${parsed} is not a walk (walking_route_id is null)`,
+    );
+  }
+  await db.execute({
+    sql: 'DELETE FROM exercise_logs WHERE id = ?',
+    args: [parsed],
+  });
+  const name = await userNameById(Number(row.user_id));
+  revalidatePath(`/${name}/today`);
 }
 

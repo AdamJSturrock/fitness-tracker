@@ -2,13 +2,16 @@ import { notFound } from 'next/navigation';
 import type { UserName } from '@/lib/types';
 import {
   getEntries,
+  getLatestWeightLb,
   getMealsForDate,
   getProfile,
   getRecentlyUsedFoods,
   getStreak,
   getTodayRoutineRows,
+  getWalkLogsForDate,
   listFoods,
   listRoutines,
+  listWalkingRoutes,
 } from '@/server/queries';
 import { todayIso } from '@/lib/dateUtils';
 import DateSwitcher from '@/components/DateSwitcher';
@@ -40,16 +43,29 @@ export default async function TodayPage({
       : today;
   const isToday = date === today;
 
-  const [meals, foods, recentFoods, entries, todayRoutine, streak, allRoutines] =
-    await Promise.all([
-      getMealsForDate(profile.id, date),
-      listFoods({ includeArchived: false }),
-      getRecentlyUsedFoods(profile.id, 8),
-      getEntries(profile.id, date),
-      getTodayRoutineRows(profile.id, date),
-      getStreak(profile.id, date),
-      listRoutines(profile.id),
-    ]);
+  const [
+    meals,
+    foods,
+    recentFoods,
+    entries,
+    todayRoutine,
+    streak,
+    allRoutines,
+    walkingRoutes,
+    walkLogs,
+    latestWeightLb,
+  ] = await Promise.all([
+    getMealsForDate(profile.id, date),
+    listFoods({ includeArchived: false }),
+    getRecentlyUsedFoods(profile.id, 8),
+    getEntries(profile.id, date),
+    getTodayRoutineRows(profile.id, date),
+    getStreak(profile.id, date),
+    listRoutines(profile.id),
+    listWalkingRoutes(profile.id, { includeArchived: false }),
+    getWalkLogsForDate(profile.id, date),
+    getLatestWeightLb(profile.id),
+  ]);
 
   const todaysEntry = entries.find((e) => e.date === date) ?? null;
 
@@ -78,6 +94,9 @@ export default async function TodayPage({
         routineRows={todayRoutine.rows}
         streak={streak}
         hasAnyRoutine={allRoutines.length > 0}
+        walkingRoutes={walkingRoutes}
+        walkLogs={walkLogs}
+        latestWeightLb={latestWeightLb}
       />
     </div>
   );

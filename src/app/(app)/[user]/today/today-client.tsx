@@ -8,16 +8,22 @@ import type {
   RoutineWithExercises,
   TodayRoutineRow,
   UserName,
+  WalkingRoute,
+  WalkLogWithRoute,
+  WalkPace,
 } from '@/lib/types';
 import DailyForm, { type DailyFormInput } from '@/components/DailyForm';
 import FoodPicker from '@/components/FoodPicker';
 import TodaysMeals from '@/components/TodaysMeals';
+import WalksSection from '@/components/WalksSection';
 import WorkoutSection from '@/components/WorkoutSection';
 import type { FoodFormInput } from '@/components/FoodForm';
 import {
   addMealItem,
   createFood,
+  logWalk,
   removeMealItem,
+  removeWalkLog,
   tickRoutineExercise,
   untickRoutineExercise,
   updateExerciseLog,
@@ -39,6 +45,9 @@ export interface TodayClientProps {
   routineRows: TodayRoutineRow[];
   streak: number;
   hasAnyRoutine: boolean;
+  walkingRoutes: WalkingRoute[];
+  walkLogs: WalkLogWithRoute[];
+  latestWeightLb: number | null;
 }
 
 export default function TodayClient({
@@ -55,6 +64,9 @@ export default function TodayClient({
   routineRows,
   streak,
   hasAnyRoutine,
+  walkingRoutes,
+  walkLogs,
+  latestWeightLb,
 }: TodayClientProps) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -119,6 +131,20 @@ export default function TodayClient({
     refresh();
   }
 
+  async function handleLogWalk(input: {
+    walkingRouteId: number;
+    durationMin: number;
+    pace: WalkPace;
+  }) {
+    await logWalk({ userId, date, ...input });
+    refresh();
+  }
+
+  async function handleRemoveWalk(id: number) {
+    await removeWalkLog(id);
+    refresh();
+  }
+
   return (
     <div className="space-y-4">
       <DailyForm
@@ -136,6 +162,16 @@ export default function TodayClient({
         onTick={handleTick}
         onUntick={handleUntick}
         onUpdateLog={handleUpdateLog}
+      />
+      <WalksSection
+        userId={userId}
+        userSegment={userSegment}
+        date={date}
+        routes={walkingRoutes}
+        walkLogs={walkLogs}
+        weightLb={latestWeightLb}
+        onLog={handleLogWalk}
+        onRemove={handleRemoveWalk}
       />
       <TodaysMeals
         meals={meals}

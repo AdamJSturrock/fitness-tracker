@@ -149,6 +149,22 @@ const STATEMENTS: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS performance_snapshots_user_ex_date_idx
      ON performance_snapshots(user_id, exercise_id, date)`,
+  // ---- Phase 4: walking routes ----
+  // Per-user library of named dog-walk routes. Distance and elevation are
+  // computed once at save-time from the drawn polyline (haversine + Open-Meteo).
+  // Daily logging references one of these routes via exercise_logs.walking_route_id.
+  `CREATE TABLE IF NOT EXISTS walking_routes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    distance_mi REAL NOT NULL,
+    elevation_gain_ft REAL,
+    default_minutes INTEGER NOT NULL,
+    geojson TEXT NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS walking_routes_user_idx ON walking_routes(user_id, archived)`,
 ];
 
 async function main() {
@@ -191,6 +207,9 @@ async function main() {
   // Phase 3: muscle-building mode + protein target.
   await tryAddColumn('users', 'mode', "TEXT NOT NULL DEFAULT 'loss'");
   await tryAddColumn('users', 'protein_target_g', 'INTEGER');
+  // Phase 4: walking routes — exercise_logs gains a route FK and a pace tag.
+  await tryAddColumn('exercise_logs', 'walking_route_id', 'INTEGER REFERENCES walking_routes(id)');
+  await tryAddColumn('exercise_logs', 'walk_pace', 'TEXT');
 
   // Seed an Elliptical exercise with the 0.67 correction factor so it's
   // available in the shared library without anyone having to add it.
@@ -212,6 +231,19 @@ async function main() {
                   kcal_correction_factor = COALESCE(kcal_correction_factor, 0.67)
             WHERE id = ?`,
       args: [ellipticalLookup.rows[0].id],
+    });
+  }
+
+  // Shared "Dog walk" exercise — kcal is derived from MET × kg × hours at
+  // display time, so the correction factor is 1.0 and kcal_machine is unused.
+  const dogWalkLookup = await client.execute({
+    sql: `SELECT id FROM exercises WHERE name = 'Dog walk' LIMIT 1`,
+  });
+  if (!dogWalkLookup.rows[0]) {
+    await client.execute({
+      sql: `INSERT INTO exercises (name, category, kcal_correction_factor)
+            VALUES (?, ?, ?)`,
+      args: ['Dog walk', 'cardio', 1.0],
     });
   }
 
