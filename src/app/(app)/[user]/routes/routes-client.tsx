@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { UserName, WalkingRoute } from '@/lib/types';
+import { DEFAULT_PACE, kcalForWalk } from '@/lib/walks';
 import {
   archiveWalkingRoute,
   createWalkingRoute,
@@ -21,9 +22,14 @@ export interface RoutesClientProps {
   userId: number;
   userSegment: UserName;
   routes: WalkingRoute[];
+  latestWeightLb: number | null;
 }
 
-export default function RoutesClient({ userId, routes }: RoutesClientProps) {
+export default function RoutesClient({
+  userId,
+  routes,
+  latestWeightLb,
+}: RoutesClientProps) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [drawing, setDrawing] = useState(false);
@@ -96,7 +102,12 @@ export default function RoutesClient({ userId, routes }: RoutesClientProps) {
       ) : (
         <ul className="space-y-3">
           {routes.map((r) => (
-            <RouteCard key={r.id} route={r} onChange={refresh} />
+            <RouteCard
+              key={r.id}
+              route={r}
+              latestWeightLb={latestWeightLb}
+              onChange={refresh}
+            />
           ))}
         </ul>
       )}
@@ -106,9 +117,11 @@ export default function RoutesClient({ userId, routes }: RoutesClientProps) {
 
 function RouteCard({
   route,
+  latestWeightLb,
   onChange,
 }: {
   route: WalkingRoute;
+  latestWeightLb: number | null;
   onChange: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -167,6 +180,11 @@ function RouteCard({
     route.elevationGainFt != null
       ? Math.round(route.elevationGainFt / 10) * 10
       : null;
+  const estKcal = kcalForWalk({
+    pace: DEFAULT_PACE,
+    minutes: route.defaultMinutes,
+    weightLb: latestWeightLb,
+  });
 
   return (
     <li className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -198,7 +216,15 @@ function RouteCard({
               {route.distanceMi.toFixed(1)} mi
               {elevRounded != null ? ` · ${elevRounded} ft gain` : ''}
               {' · '}default {route.defaultMinutes} min
+              {latestWeightLb != null && estKcal > 0
+                ? ` · ~${estKcal} kcal`
+                : ''}
             </p>
+            {latestWeightLb == null ? (
+              <p className="mt-1 text-[11px] text-slate-400">
+                Log a weight on Today to see kcal estimates.
+              </p>
+            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-3">
             {!editingName ? (

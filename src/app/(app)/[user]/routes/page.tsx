@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import type { UserName } from '@/lib/types';
 import { VALID_USERS } from '@/lib/types';
-import { getProfile, listWalkingRoutes } from '@/server/queries';
+import { getLatestWeightLb, getProfile, listWalkingRoutes } from '@/server/queries';
 import RoutesClient from './routes-client';
 
 export default async function RoutesPage({
@@ -14,7 +14,10 @@ export default async function RoutesPage({
   const name = user as UserName;
 
   const profile = await getProfile(name);
-  const routes = await listWalkingRoutes(profile.id, { includeArchived: false });
+  const [routes, latestWeightLb] = await Promise.all([
+    listWalkingRoutes(profile.id, { includeArchived: false }),
+    getLatestWeightLb(profile.id),
+  ]);
 
   return (
     <div className="space-y-5">
@@ -32,6 +35,7 @@ export default async function RoutesPage({
         userId={profile.id}
         userSegment={name}
         routes={routes}
+        latestWeightLb={latestWeightLb}
       />
     </div>
   );
