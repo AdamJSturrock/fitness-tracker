@@ -166,6 +166,8 @@ export interface WalkingRoute {
   geojson: string;
   archived: boolean;
   createdAt: string;
+  /** Number of times this route has been logged as a walk. */
+  walkCount: number;
 }
 
 /** A walk log (exercise_log row with walking_route_id set) plus the route. */

@@ -10,8 +10,11 @@ import type {
 } from '@/lib/types';
 import {
   DEFAULT_PACE,
+  DIFFICULTY_CHIP_CLASSES,
+  DIFFICULTY_LABELS,
   PACE_LABELS,
   kcalForWalk,
+  routeDifficulty,
 } from '@/lib/walks';
 
 export interface WalksSectionProps {
@@ -107,8 +110,28 @@ export default function WalksSection({
                     onClick={() => setOpenRouteId(route.id)}
                     className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-emerald-300 hover:bg-emerald-50"
                   >
-                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">
-                      {route.name}
+                    <span className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                      <span className="min-w-0 truncate text-sm font-semibold text-slate-900">
+                        {route.name}
+                      </span>
+                      {(() => {
+                        const d = routeDifficulty(
+                          route.distanceMi,
+                          route.elevationGainFt,
+                        );
+                        return (
+                          <span
+                            className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${DIFFICULTY_CHIP_CLASSES[d]}`}
+                          >
+                            {DIFFICULTY_LABELS[d]}
+                          </span>
+                        );
+                      })()}
+                      {route.walkCount > 0 ? (
+                        <span className="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                          {route.walkCount}×
+                        </span>
+                      ) : null}
                     </span>
                     <span className="shrink-0 text-xs text-slate-500">
                       {formatDistance(route.distanceMi)} mi ·{' '}

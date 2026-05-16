@@ -827,6 +827,7 @@ function rowToWalkingRoute(r: Row): WalkingRoute {
     geojson: String(r.geojson),
     archived: Number(r.archived) !== 0,
     createdAt: String(r.created_at),
+    walkCount: r.walk_count == null ? 0 : Number(r.walk_count),
   };
 }
 
@@ -837,11 +838,14 @@ export async function listWalkingRoutes(
   const db = getDb();
   const includeArchived = opts?.includeArchived ?? false;
   const result = await db.execute({
-    sql: `SELECT id, user_id, name, distance_mi, elevation_gain_ft,
-                 default_minutes, geojson, archived, created_at
-            FROM walking_routes
-           WHERE user_id = ?${includeArchived ? '' : ' AND archived = 0'}
-           ORDER BY name COLLATE NOCASE ASC, id ASC`,
+    sql: `SELECT wr.id, wr.user_id, wr.name, wr.distance_mi, wr.elevation_gain_ft,
+                 wr.default_minutes, wr.geojson, wr.archived, wr.created_at,
+                 COUNT(el.id) AS walk_count
+            FROM walking_routes wr
+            LEFT JOIN exercise_logs el ON el.walking_route_id = wr.id
+           WHERE wr.user_id = ?${includeArchived ? '' : ' AND wr.archived = 0'}
+        GROUP BY wr.id
+        ORDER BY walk_count DESC, wr.name COLLATE NOCASE ASC, wr.id ASC`,
     args: [userId],
   });
   return result.rows.map(rowToWalkingRoute);
@@ -850,9 +854,14 @@ export async function listWalkingRoutes(
 export async function getWalkingRouteById(id: number): Promise<WalkingRoute> {
   const db = getDb();
   const result = await db.execute({
-    sql: `SELECT id, user_id, name, distance_mi, elevation_gain_ft,
-                 default_minutes, geojson, archived, created_at
-            FROM walking_routes WHERE id = ? LIMIT 1`,
+    sql: `SELECT wr.id, wr.user_id, wr.name, wr.distance_mi, wr.elevation_gain_ft,
+                 wr.default_minutes, wr.geojson, wr.archived, wr.created_at,
+                 COUNT(el.id) AS walk_count
+            FROM walking_routes wr
+            LEFT JOIN exercise_logs el ON el.walking_route_id = wr.id
+           WHERE wr.id = ?
+        GROUP BY wr.id
+           LIMIT 1`,
     args: [id],
   });
   const row = result.rows[0];

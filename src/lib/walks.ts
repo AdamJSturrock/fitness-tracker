@@ -38,6 +38,45 @@ export function kcalForWalk(input: {
   return Math.round(met * kg * hours);
 }
 
+// ---- Route difficulty ----
+
+export type RouteDifficulty = 'easy' | 'medium' | 'hard';
+
+export const DIFFICULTY_LABELS: Record<RouteDifficulty, string> = {
+  easy: 'Easy',
+  medium: 'Medium',
+  hard: 'Hard',
+};
+
+/** Tailwind chip classes for each bucket. */
+export const DIFFICULTY_CHIP_CLASSES: Record<RouteDifficulty, string> = {
+  easy: 'bg-emerald-100 text-emerald-700',
+  medium: 'bg-amber-100 text-amber-700',
+  hard: 'bg-rose-100 text-rose-700',
+};
+
+/**
+ * Energy-miles shorthand: each 500 ft of climb counts as one extra mile of
+ * effort. Used to bucket a saved route into easy / medium / hard for at-a-
+ * glance comparison on the routes list and the Today screen.
+ */
+export function routeEnergyMiles(
+  distanceMi: number,
+  elevationGainFt: number | null,
+): number {
+  return distanceMi + (elevationGainFt ?? 0) / 500;
+}
+
+export function routeDifficulty(
+  distanceMi: number,
+  elevationGainFt: number | null,
+): RouteDifficulty {
+  const em = routeEnergyMiles(distanceMi, elevationGainFt);
+  if (em < 2) return 'easy';
+  if (em < 3) return 'medium';
+  return 'hard';
+}
+
 // ---- Polyline maths ----
 
 const EARTH_RADIUS_M = 6_371_000;

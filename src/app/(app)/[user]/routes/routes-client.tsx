@@ -4,7 +4,13 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { UserName, WalkingRoute } from '@/lib/types';
-import { DEFAULT_PACE, kcalForWalk } from '@/lib/walks';
+import {
+  DEFAULT_PACE,
+  DIFFICULTY_CHIP_CLASSES,
+  DIFFICULTY_LABELS,
+  kcalForWalk,
+  routeDifficulty,
+} from '@/lib/walks';
 import {
   archiveWalkingRoute,
   createWalkingRoute,
@@ -185,6 +191,7 @@ function RouteCard({
     minutes: route.defaultMinutes,
     weightLb: latestWeightLb,
   });
+  const difficulty = routeDifficulty(route.distanceMi, route.elevationGainFt);
 
   return (
     <li className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -208,9 +215,16 @@ function RouteCard({
                 className="block h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-base font-semibold shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
               />
             ) : (
-              <p className="truncate text-base font-semibold text-slate-900">
-                {route.name}
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="truncate text-base font-semibold text-slate-900">
+                  {route.name}
+                </p>
+                <span
+                  className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${DIFFICULTY_CHIP_CLASSES[difficulty]}`}
+                >
+                  {DIFFICULTY_LABELS[difficulty]}
+                </span>
+              </div>
             )}
             <p className="mt-1 text-xs text-slate-500">
               {route.distanceMi.toFixed(1)} mi
@@ -219,6 +233,7 @@ function RouteCard({
               {latestWeightLb != null && estKcal > 0
                 ? ` · ~${estKcal} kcal`
                 : ''}
+              {' · '}walked {route.walkCount}×
             </p>
             {latestWeightLb == null ? (
               <p className="mt-1 text-[11px] text-slate-400">
