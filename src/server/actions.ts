@@ -11,6 +11,7 @@ import {
   getWalkingRouteById,
 } from '@/server/queries';
 import { refreshPerformanceSnapshot as refreshSnapshotShared } from '@/server/snapshots';
+import { estimateSteps } from '@/lib/walks';
 import type {
   Entry,
   Exercise,
@@ -1297,8 +1298,23 @@ export async function logWalk(input: unknown): Promise<void> {
       data.pace,
     ],
   });
+
+  // Bump the day's step count by the route's estimated steps. Idempotent-ish:
+  // if the user later edits entries.steps manually, that manual value wins.
+  const estSteps = estimateSteps(route.distanceMi);
+  if (estSteps > 0) {
+    await db.execute({
+      sql: `INSERT INTO entries (user_id, date, steps)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id, date) DO UPDATE SET
+              steps = COALESCE(entries.steps, 0) + excluded.steps`,
+      args: [data.userId, data.date, estSteps],
+    });
+  }
+
   const name = await userNameById(data.userId);
-  revalidatePath(`/${name}/today`);
+  revalidateWalkPathsForUser(name);
+  revalidateEntryPaths(name);
 }
 
 export async function removeWalkLog(id: number): Promise<void> {
@@ -1309,7 +1325,11 @@ export async function removeWalkLog(id: number): Promise<void> {
   );
   const db = getDb();
   const lookup = await db.execute({
-    sql: 'SELECT user_id, walking_route_id FROM exercise_logs WHERE id = ? LIMIT 1',
+    sql: `SELECT el.user_id, el.date, el.walking_route_id, wr.distance_mi
+            FROM exercise_logs el
+            LEFT JOIN walking_routes wr ON wr.id = el.walking_route_id
+           WHERE el.id = ?
+           LIMIT 1`,
     args: [parsed],
   });
   const row = lookup.rows[0];
@@ -1323,7 +1343,22 @@ export async function removeWalkLog(id: number): Promise<void> {
     sql: 'DELETE FROM exercise_logs WHERE id = ?',
     args: [parsed],
   });
+
+  // Reverse the step bump so the daily total stays consistent. Clamp at 0
+  // in case the user manually edited steps lower in between.
+  const distanceMi = row.distance_mi == null ? 0 : Number(row.distance_mi);
+  const estSteps = estimateSteps(distanceMi);
+  if (estSteps > 0) {
+    await db.execute({
+      sql: `UPDATE entries
+              SET steps = MAX(0, COALESCE(steps, 0) - ?)
+            WHERE user_id = ? AND date = ?`,
+      args: [estSteps, Number(row.user_id), String(row.date)],
+    });
+  }
+
   const name = await userNameById(Number(row.user_id));
-  revalidatePath(`/${name}/today`);
+  revalidateWalkPathsForUser(name);
+  revalidateEntryPaths(name);
 }
 

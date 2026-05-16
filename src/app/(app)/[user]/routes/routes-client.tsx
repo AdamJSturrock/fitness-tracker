@@ -8,6 +8,7 @@ import {
   DEFAULT_PACE,
   DIFFICULTY_CHIP_CLASSES,
   DIFFICULTY_LABELS,
+  estimateSteps,
   kcalForWalk,
   routeDifficulty,
 } from '@/lib/walks';
@@ -192,6 +193,7 @@ function RouteCard({
     weightLb: latestWeightLb,
   });
   const difficulty = routeDifficulty(route.distanceMi, route.elevationGainFt);
+  const estStepsCount = estimateSteps(route.distanceMi);
 
   return (
     <li className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -232,6 +234,9 @@ function RouteCard({
               {' · '}default {route.defaultMinutes} min
               {latestWeightLb != null && estKcal > 0
                 ? ` · ~${estKcal} kcal`
+                : ''}
+              {estStepsCount > 0
+                ? ` · ~${estStepsCount.toLocaleString()} steps`
                 : ''}
               {' · '}walked {route.walkCount}×
             </p>

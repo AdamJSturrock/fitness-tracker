@@ -2,17 +2,26 @@
 
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import type {
   UserName,
   WalkingRoute,
   WalkLogWithRoute,
   WalkPace,
 } from '@/lib/types';
+
+const RouteMap = dynamic(() => import('@/components/RouteMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-20 w-20 shrink-0 animate-pulse rounded-md bg-slate-100" />
+  ),
+});
 import {
   DEFAULT_PACE,
   DIFFICULTY_CHIP_CLASSES,
   DIFFICULTY_LABELS,
   PACE_LABELS,
+  estimateSteps,
   kcalForWalk,
   routeDifficulty,
 } from '@/lib/walks';
@@ -105,39 +114,11 @@ export default function WalksSection({
                     }}
                   />
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => setOpenRouteId(route.id)}
-                    className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-emerald-300 hover:bg-emerald-50"
-                  >
-                    <span className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                      <span className="min-w-0 truncate text-sm font-semibold text-slate-900">
-                        {route.name}
-                      </span>
-                      {(() => {
-                        const d = routeDifficulty(
-                          route.distanceMi,
-                          route.elevationGainFt,
-                        );
-                        return (
-                          <span
-                            className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${DIFFICULTY_CHIP_CLASSES[d]}`}
-                          >
-                            {DIFFICULTY_LABELS[d]}
-                          </span>
-                        );
-                      })()}
-                      {route.walkCount > 0 ? (
-                        <span className="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
-                          {route.walkCount}×
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="shrink-0 text-xs text-slate-500">
-                      {formatDistance(route.distanceMi)} mi ·{' '}
-                      {route.defaultMinutes} min
-                    </span>
-                  </button>
+                  <RouteCardButton
+                    route={route}
+                    weightLb={weightLb}
+                    onOpen={() => setOpenRouteId(route.id)}
+                  />
                 )}
               </li>
             ))}
@@ -173,6 +154,69 @@ export default function WalksSection({
 
 function formatDistance(mi: number): string {
   return mi.toFixed(mi < 10 ? 1 : 0);
+}
+
+function RouteCardButton({
+  route,
+  weightLb,
+  onOpen,
+}: {
+  route: WalkingRoute;
+  weightLb: number | null;
+  onOpen: () => void;
+}) {
+  const difficulty = routeDifficulty(route.distanceMi, route.elevationGainFt);
+  const estKcal = kcalForWalk({
+    pace: DEFAULT_PACE,
+    minutes: route.defaultMinutes,
+    weightLb,
+  });
+  const estStepsCount = estimateSteps(route.distanceMi);
+  const elevRounded =
+    route.elevationGainFt != null
+      ? Math.round(route.elevationGainFt / 10) * 10
+      : null;
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex w-full items-stretch gap-3 rounded-lg border border-slate-200 bg-white p-2 text-left transition hover:border-emerald-300 hover:bg-emerald-50"
+    >
+      <div className="h-20 w-20 shrink-0">
+        <RouteMap
+          mode="preview"
+          initialGeoJson={route.geojson}
+          heightClass="h-20"
+        />
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col justify-between gap-1 py-1 pr-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="min-w-0 truncate text-sm font-semibold text-slate-900">
+            {route.name}
+          </span>
+          <span
+            className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${DIFFICULTY_CHIP_CLASSES[difficulty]}`}
+          >
+            {DIFFICULTY_LABELS[difficulty]}
+          </span>
+          {route.walkCount > 0 ? (
+            <span className="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+              {route.walkCount}×
+            </span>
+          ) : null}
+        </div>
+        <p className="text-[11px] leading-snug text-slate-500">
+          {formatDistance(route.distanceMi)} mi
+          {elevRounded != null ? ` · ${elevRounded} ft` : ''}
+          {' · '}
+          {route.defaultMinutes} min
+          {weightLb != null && estKcal > 0 ? ` · ~${estKcal} kcal` : ''}
+          {estStepsCount > 0 ? ` · ~${estStepsCount.toLocaleString()} steps` : ''}
+        </p>
+      </div>
+    </button>
+  );
 }
 
 function LogForm({

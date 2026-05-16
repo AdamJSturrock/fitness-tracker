@@ -38,6 +38,20 @@ export function kcalForWalk(input: {
   return Math.round(met * kg * hours);
 }
 
+// ---- Step estimation ----
+
+/**
+ * Steps per mile for a typical adult walking pace. Stride length varies with
+ * height and pace, but for casual dog-walking the spread is small enough that
+ * a flat figure is honest. ~2200 falls between brisk (~2000) and slow (~2400).
+ */
+export const STEPS_PER_MILE = 2200;
+
+export function estimateSteps(distanceMi: number): number {
+  if (!Number.isFinite(distanceMi) || distanceMi <= 0) return 0;
+  return Math.round(distanceMi * STEPS_PER_MILE);
+}
+
 // ---- Route difficulty ----
 
 export type RouteDifficulty = 'easy' | 'medium' | 'hard';
