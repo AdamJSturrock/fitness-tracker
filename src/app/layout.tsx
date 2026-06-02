@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Fitness Tracker",
-  description: "Daily check-ins and weight tracking for Adam & Anna.",
+  description: "Daily check-ins and weight tracking for Adam.",
 };
 
 export default function RootLayout({

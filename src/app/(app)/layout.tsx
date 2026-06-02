@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getSession } from '@/lib/auth';
-import UserSwitcher from '@/components/UserSwitcher';
 import NavTabs from '@/components/NavTabs';
 import LogoutButton from '@/components/LogoutButton';
 
@@ -26,7 +25,6 @@ export default async function AppLayout({
           >
             Fitness Tracker
           </Link>
-          <UserSwitcher />
           <LogoutButton />
         </div>
         <NavTabs />
