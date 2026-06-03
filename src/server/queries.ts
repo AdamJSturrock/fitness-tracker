@@ -9,9 +9,12 @@ import type {
   ExerciseLog,
   ExerciseLogWithExercise,
   Food,
+  FoodDataSource,
   GoalMode,
   MealItem,
   MealItemWithFood,
+  NovaGroup,
+  NutriScore,
   PerformanceSnapshot,
   PerformanceSnapshotWithExercise,
   Profile,
@@ -83,6 +86,34 @@ function rowToEntry(r: Row): Entry {
   };
 }
 
+function parseNutriscore(v: unknown): NutriScore | null {
+  if (v === null || v === undefined) return null;
+  const s = String(v).toLowerCase();
+  return s === 'a' || s === 'b' || s === 'c' || s === 'd' || s === 'e'
+    ? s
+    : null;
+}
+
+function parseNovaGroup(v: unknown): NovaGroup | null {
+  const n = toIntOrNull(v);
+  return n === 1 || n === 2 || n === 3 || n === 4 ? n : null;
+}
+
+function parseBoolOrNull(v: unknown): boolean | null {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  if (Number.isNaN(n)) return null;
+  return n !== 0;
+}
+
+function parseDataSource(v: unknown): FoodDataSource | null {
+  if (v === null || v === undefined) return null;
+  const s = String(v);
+  return s === 'openfoodfacts' || s === 'fatsecret' || s === 'manual'
+    ? s
+    : null;
+}
+
 function rowToFood(r: Row): Food {
   return {
     id: Number(r.id),
@@ -94,10 +125,24 @@ function rowToFood(r: Row): Food {
     carbsG: toNumOrNull(r.carbs_g),
     fatG: toNumOrNull(r.fat_g),
     archived: Number(r.archived) !== 0,
-    createdBy: r.created_by === null || r.created_by === undefined
-      ? null
-      : Number(r.created_by),
+    createdBy:
+      r.created_by === null || r.created_by === undefined
+        ? null
+        : Number(r.created_by),
     createdAt: String(r.created_at),
+    barcode: toStringOrNull(r.barcode),
+    fiberG: toNumOrNull(r.fiber_g),
+    sugarG: toNumOrNull(r.sugar_g),
+    satFatG: toNumOrNull(r.sat_fat_g),
+    saltG: toNumOrNull(r.salt_g),
+    nutriscore: parseNutriscore(r.nutriscore),
+    novaGroup: parseNovaGroup(r.nova_group),
+    isVegan: parseBoolOrNull(r.is_vegan),
+    isVegetarian: parseBoolOrNull(r.is_vegetarian),
+    imageUrl: toStringOrNull(r.image_url),
+    ingredients: toStringOrNull(r.ingredients),
+    dataSource: parseDataSource(r.data_source),
+    rawNutritionJson: toStringOrNull(r.raw_nutrition_json),
   };
 }
 
@@ -118,6 +163,19 @@ function rowToFoodAliased(r: Row, prefix: string): Food {
         ? null
         : Number(r[`${prefix}created_by`]),
     createdAt: String(r[`${prefix}created_at`]),
+    barcode: toStringOrNull(r[`${prefix}barcode`]),
+    fiberG: toNumOrNull(r[`${prefix}fiber_g`]),
+    sugarG: toNumOrNull(r[`${prefix}sugar_g`]),
+    satFatG: toNumOrNull(r[`${prefix}sat_fat_g`]),
+    saltG: toNumOrNull(r[`${prefix}salt_g`]),
+    nutriscore: parseNutriscore(r[`${prefix}nutriscore`]),
+    novaGroup: parseNovaGroup(r[`${prefix}nova_group`]),
+    isVegan: parseBoolOrNull(r[`${prefix}is_vegan`]),
+    isVegetarian: parseBoolOrNull(r[`${prefix}is_vegetarian`]),
+    imageUrl: toStringOrNull(r[`${prefix}image_url`]),
+    ingredients: toStringOrNull(r[`${prefix}ingredients`]),
+    dataSource: parseDataSource(r[`${prefix}data_source`]),
+    rawNutritionJson: toStringOrNull(r[`${prefix}raw_nutrition_json`]),
   };
 }
 
@@ -145,6 +203,25 @@ function rowToMealItemWithFood(r: Row): MealItemWithFood {
   };
 }
 
+/**
+ * Bare column list for `foods.*` reads — kept in one place because every
+ * food-returning query needs all of them and we add a few each phase.
+ */
+const FOOD_COLUMNS = `
+  id, name, brand, serving_label, calories_per_serving,
+  protein_g, carbs_g, fat_g, archived, created_by, created_at,
+  barcode, fiber_g, sugar_g, sat_fat_g, salt_g,
+  nutriscore, nova_group, is_vegan, is_vegetarian,
+  image_url, ingredients, data_source, raw_nutrition_json
+`;
+
+/** Same set, qualified with a table alias (e.g. 'foods.' or 'f.'). */
+function qualifiedFoodColumns(prefix: string): string {
+  return FOOD_COLUMNS.split(',')
+    .map((c) => `${prefix}${c.trim()}`)
+    .join(', ');
+}
+
 const MEAL_JOIN_COLUMNS = `
   meal_items.id            AS mi_id,
   meal_items.user_id       AS mi_user_id,
@@ -162,7 +239,20 @@ const MEAL_JOIN_COLUMNS = `
   foods.fat_g              AS f_fat_g,
   foods.archived           AS f_archived,
   foods.created_by         AS f_created_by,
-  foods.created_at         AS f_created_at
+  foods.created_at         AS f_created_at,
+  foods.barcode            AS f_barcode,
+  foods.fiber_g            AS f_fiber_g,
+  foods.sugar_g            AS f_sugar_g,
+  foods.sat_fat_g          AS f_sat_fat_g,
+  foods.salt_g             AS f_salt_g,
+  foods.nutriscore         AS f_nutriscore,
+  foods.nova_group         AS f_nova_group,
+  foods.is_vegan           AS f_is_vegan,
+  foods.is_vegetarian      AS f_is_vegetarian,
+  foods.image_url          AS f_image_url,
+  foods.ingredients        AS f_ingredients,
+  foods.data_source        AS f_data_source,
+  foods.raw_nutrition_json AS f_raw_nutrition_json
 `;
 
 // ---------- Public queries ----------
@@ -250,8 +340,7 @@ export async function listFoods(opts?: {
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
   const result = await db.execute({
-    sql: `SELECT id, name, brand, serving_label, calories_per_serving,
-                 protein_g, carbs_g, fat_g, archived, created_by, created_at
+    sql: `SELECT ${FOOD_COLUMNS}
             FROM foods
             ${whereSql}
            ORDER BY name COLLATE NOCASE ASC, id ASC`,
@@ -269,9 +358,7 @@ export async function getRecentlyUsedFoods(
   // ranked by usage count (desc), then most-recent log date (desc).
   // Excludes archived foods.
   const result = await db.execute({
-    sql: `SELECT foods.id, foods.name, foods.brand, foods.serving_label,
-                 foods.calories_per_serving, foods.protein_g, foods.carbs_g,
-                 foods.fat_g, foods.archived, foods.created_by, foods.created_at,
+    sql: `SELECT ${qualifiedFoodColumns('foods.')},
                  COUNT(meal_items.id) AS usage_count,
                  MAX(meal_items.date) AS last_date
             FROM meal_items
@@ -285,6 +372,44 @@ export async function getRecentlyUsedFoods(
     args: [userId, limit],
   });
   return result.rows.map(rowToFood);
+}
+
+export async function getFavoriteFoods(userId: number): Promise<Food[]> {
+  const db = getDb();
+  // Up to 12 explicit pinned favorites for this user, newest-first by when
+  // they were favorited. Excludes archived foods so the strip stays clean
+  // when a favorite is later retired.
+  const result = await db.execute({
+    sql: `SELECT ${qualifiedFoodColumns('foods.')}
+            FROM food_favorites
+            JOIN foods ON foods.id = food_favorites.food_id
+           WHERE food_favorites.user_id = ?
+             AND foods.archived = 0
+           ORDER BY food_favorites.created_at DESC, foods.id DESC
+           LIMIT 12`,
+    args: [userId],
+  });
+  return result.rows.map(rowToFood);
+}
+
+/**
+ * Lookup a food by its scanned barcode. Returns null if no row matches.
+ * Used by the scanner to skip the OFF/FatSecret round-trip on re-scans.
+ */
+export async function findFoodByBarcode(
+  barcode: string,
+): Promise<Food | null> {
+  const db = getDb();
+  const result = await db.execute({
+    sql: `SELECT ${FOOD_COLUMNS}
+            FROM foods
+           WHERE barcode = ?
+           LIMIT 1`,
+    args: [barcode],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+  return rowToFood(row);
 }
 
 export async function getDayCalorieTotals(

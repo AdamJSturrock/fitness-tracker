@@ -74,7 +74,30 @@ export const mockProfiles: Record<UserName, Profile> = {
 
 // ---------- Foods ----------
 
-export const mockFoods: Food[] = [
+/**
+ * Defaults for the Phase 5 rich nutrition columns. Mock foods predate the
+ * barcode scanner, so all the new fields are null. Spreading this saves
+ * repeating 14 nulls on every mock row.
+ */
+const FOOD_RICH_NULLS = {
+  barcode: null,
+  fiberG: null,
+  sugarG: null,
+  satFatG: null,
+  saltG: null,
+  nutriscore: null,
+  novaGroup: null,
+  isVegan: null,
+  isVegetarian: null,
+  imageUrl: null,
+  ingredients: null,
+  dataSource: null,
+  rawNutritionJson: null,
+} as const;
+
+type FoodCore = Omit<Food, keyof typeof FOOD_RICH_NULLS>;
+
+const rawMockFoods: FoodCore[] = [
   {
     id: 1,
     name: 'Weetabix',
@@ -232,6 +255,11 @@ export const mockFoods: Food[] = [
     createdAt: '2026-03-22 10:15:00',
   },
 ];
+
+export const mockFoods: Food[] = rawMockFoods.map((f) => ({
+  ...f,
+  ...FOOD_RICH_NULLS,
+}));
 
 // ---------- Date helpers (no date-fns to keep this dep-light) ----------
 

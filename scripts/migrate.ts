@@ -165,6 +165,16 @@ const STATEMENTS: string[] = [
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   `CREATE INDEX IF NOT EXISTS walking_routes_user_idx ON walking_routes(user_id, archived)`,
+  // ---- Phase 5: food favorites ----
+  // Explicit pinned favorites per user. Composite PK keeps it one-row-per-pair;
+  // the index supports "most-recently-favorited first" listings.
+  `CREATE TABLE IF NOT EXISTS food_favorites (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    food_id INTEGER NOT NULL REFERENCES foods(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, food_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS food_favorites_user_idx ON food_favorites(user_id, created_at DESC)`,
 ];
 
 async function main() {
@@ -210,6 +220,28 @@ async function main() {
   // Phase 4: walking routes — exercise_logs gains a route FK and a pace tag.
   await tryAddColumn('exercise_logs', 'walking_route_id', 'INTEGER REFERENCES walking_routes(id)');
   await tryAddColumn('exercise_logs', 'walk_pace', 'TEXT');
+  // Phase 5: barcode scanner + richer nutrition data on foods.
+  // All NULL-allowed so existing manually-entered foods keep working unchanged.
+  // raw_nutrition_json stores the verbatim API response for later diet-quality
+  // analysis (NOVA distribution, sat-fat exposure, etc.).
+  await tryAddColumn('foods', 'barcode', 'TEXT');
+  await tryAddColumn('foods', 'fiber_g', 'REAL');
+  await tryAddColumn('foods', 'sugar_g', 'REAL');
+  await tryAddColumn('foods', 'sat_fat_g', 'REAL');
+  await tryAddColumn('foods', 'salt_g', 'REAL');
+  await tryAddColumn('foods', 'nutriscore', 'TEXT');
+  await tryAddColumn('foods', 'nova_group', 'INTEGER');
+  await tryAddColumn('foods', 'is_vegan', 'INTEGER');
+  await tryAddColumn('foods', 'is_vegetarian', 'INTEGER');
+  await tryAddColumn('foods', 'image_url', 'TEXT');
+  await tryAddColumn('foods', 'ingredients', 'TEXT');
+  await tryAddColumn('foods', 'data_source', 'TEXT');
+  await tryAddColumn('foods', 'raw_nutrition_json', 'TEXT');
+  // Partial index — only barcoded foods are indexed, keeping the index small
+  // while still giving O(log n) lookup for cache-hit checks on scan.
+  await client.execute(
+    `CREATE INDEX IF NOT EXISTS foods_barcode_idx ON foods(barcode) WHERE barcode IS NOT NULL`,
+  );
 
   // Seed an Elliptical exercise with the 0.67 correction factor so it's
   // available in the shared library without anyone having to add it.

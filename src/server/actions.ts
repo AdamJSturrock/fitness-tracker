@@ -4,12 +4,14 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { getDb } from '@/lib/db';
 import {
+  findFoodByBarcode,
   getDogWalkExerciseId,
   getExerciseLogById,
   getMealItemWithFoodById,
   getProfile,
   getWalkingRouteById,
 } from '@/server/queries';
+import { lookupBarcode, type NutritionLookupResult } from '@/lib/nutrition';
 import { refreshPerformanceSnapshot as refreshSnapshotShared } from '@/server/snapshots';
 import { estimateSteps } from '@/lib/walks';
 import type {
@@ -212,6 +214,15 @@ export async function upsertEntry(input: unknown): Promise<Entry> {
 
 // ---------- createFood ----------
 
+const nutriscoreSchema = z.enum(['a', 'b', 'c', 'd', 'e']);
+const novaGroupSchema = z
+  .number()
+  .int()
+  .refine((n) => n === 1 || n === 2 || n === 3 || n === 4, {
+    message: 'novaGroup must be 1..4',
+  });
+const dataSourceSchema = z.enum(['openfoodfacts', 'fatsecret', 'manual']);
+
 const createFoodSchema = z.object({
   name: z.string().min(1),
   brand: z.string().nullable().optional(),
@@ -221,18 +232,115 @@ const createFoodSchema = z.object({
   carbsG: z.number().nonnegative().nullable().optional(),
   fatG: z.number().nonnegative().nullable().optional(),
   createdBy: z.number().int().positive().nullable().optional(),
+  // Phase 5: barcode + rich nutrition. All optional so the FoodForm path
+  // (manual entry) keeps working unchanged.
+  barcode: z.string().nullable().optional(),
+  fiberG: z.number().nonnegative().nullable().optional(),
+  sugarG: z.number().nonnegative().nullable().optional(),
+  satFatG: z.number().nonnegative().nullable().optional(),
+  saltG: z.number().nonnegative().nullable().optional(),
+  nutriscore: nutriscoreSchema.nullable().optional(),
+  novaGroup: novaGroupSchema.nullable().optional(),
+  isVegan: z.boolean().nullable().optional(),
+  isVegetarian: z.boolean().nullable().optional(),
+  imageUrl: z.string().nullable().optional(),
+  ingredients: z.string().nullable().optional(),
+  dataSource: dataSourceSchema.nullable().optional(),
+  rawNutritionJson: z.string().nullable().optional(),
 });
 
-export async function createFood(input: unknown): Promise<Food> {
-  const data = parseOrThrow(createFoodSchema, input, 'createFood');
+/** Columns the foods RETURNING needs to populate a full Food. */
+const FOOD_RETURNING = `id, name, brand, serving_label, calories_per_serving,
+                       protein_g, carbs_g, fat_g, archived, created_by, created_at,
+                       barcode, fiber_g, sugar_g, sat_fat_g, salt_g,
+                       nutriscore, nova_group, is_vegan, is_vegetarian,
+                       image_url, ingredients, data_source, raw_nutrition_json`;
+
+function rowToFoodLocal(row: Record<string, unknown>): Food {
+  const get = (k: string): unknown => row[k];
+  const toNum = (v: unknown): number | null => {
+    if (v === null || v === undefined) return null;
+    const n = typeof v === 'bigint' ? Number(v) : Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const toStr = (v: unknown): string | null =>
+    v === null || v === undefined ? null : String(v);
+  const toBool = (v: unknown): boolean | null => {
+    if (v === null || v === undefined) return null;
+    const n = Number(v);
+    if (Number.isNaN(n)) return null;
+    return n !== 0;
+  };
+  const nutriscore = (() => {
+    const s = toStr(get('nutriscore'));
+    if (s === null) return null;
+    const lower = s.toLowerCase();
+    return lower === 'a' ||
+      lower === 'b' ||
+      lower === 'c' ||
+      lower === 'd' ||
+      lower === 'e'
+      ? (lower as 'a' | 'b' | 'c' | 'd' | 'e')
+      : null;
+  })();
+  const novaRaw = toNum(get('nova_group'));
+  const novaGroup =
+    novaRaw === 1 || novaRaw === 2 || novaRaw === 3 || novaRaw === 4
+      ? (novaRaw as 1 | 2 | 3 | 4)
+      : null;
+  const dsRaw = toStr(get('data_source'));
+  const dataSource =
+    dsRaw === 'openfoodfacts' || dsRaw === 'fatsecret' || dsRaw === 'manual'
+      ? dsRaw
+      : null;
+  return {
+    id: Number(get('id')),
+    name: String(get('name')),
+    brand: toStr(get('brand')),
+    servingLabel: String(get('serving_label')),
+    caloriesPerServing: Number(get('calories_per_serving')),
+    proteinG: toNum(get('protein_g')),
+    carbsG: toNum(get('carbs_g')),
+    fatG: toNum(get('fat_g')),
+    archived: Number(get('archived')) !== 0,
+    createdBy:
+      get('created_by') === null || get('created_by') === undefined
+        ? null
+        : Number(get('created_by')),
+    createdAt: String(get('created_at')),
+    barcode: toStr(get('barcode')),
+    fiberG: toNum(get('fiber_g')),
+    sugarG: toNum(get('sugar_g')),
+    satFatG: toNum(get('sat_fat_g')),
+    saltG: toNum(get('salt_g')),
+    nutriscore,
+    novaGroup,
+    isVegan: toBool(get('is_vegan')),
+    isVegetarian: toBool(get('is_vegetarian')),
+    imageUrl: toStr(get('image_url')),
+    ingredients: toStr(get('ingredients')),
+    dataSource,
+    rawNutritionJson: toStr(get('raw_nutrition_json')),
+  };
+}
+
+type CreateFoodInput = z.input<typeof createFoodSchema>;
+type CreateFoodParsed = z.output<typeof createFoodSchema>;
+
+async function insertFoodRow(data: CreateFoodParsed): Promise<Food> {
   const db = getDb();
   const result = await db.execute({
     sql: `INSERT INTO foods
             (name, brand, serving_label, calories_per_serving,
-             protein_g, carbs_g, fat_g, created_by)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          RETURNING id, name, brand, serving_label, calories_per_serving,
-                    protein_g, carbs_g, fat_g, archived, created_by, created_at`,
+             protein_g, carbs_g, fat_g, created_by,
+             barcode, fiber_g, sugar_g, sat_fat_g, salt_g,
+             nutriscore, nova_group, is_vegan, is_vegetarian,
+             image_url, ingredients, data_source, raw_nutrition_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+                  ?, ?, ?, ?, ?,
+                  ?, ?, ?, ?,
+                  ?, ?, ?, ?)
+          RETURNING ${FOOD_RETURNING}`,
     args: [
       data.name,
       data.brand ?? null,
@@ -242,36 +350,37 @@ export async function createFood(input: unknown): Promise<Food> {
       data.carbsG ?? null,
       data.fatG ?? null,
       data.createdBy ?? null,
+      data.barcode ?? null,
+      data.fiberG ?? null,
+      data.sugarG ?? null,
+      data.satFatG ?? null,
+      data.saltG ?? null,
+      data.nutriscore ?? null,
+      data.novaGroup ?? null,
+      data.isVegan === undefined || data.isVegan === null
+        ? null
+        : data.isVegan
+          ? 1
+          : 0,
+      data.isVegetarian === undefined || data.isVegetarian === null
+        ? null
+        : data.isVegetarian
+          ? 1
+          : 0,
+      data.imageUrl ?? null,
+      data.ingredients ?? null,
+      data.dataSource ?? null,
+      data.rawNutritionJson ?? null,
     ],
   });
   const row = result.rows[0];
   if (!row) throw new Error('createFood: insert did not return a row');
+  return rowToFoodLocal(row as unknown as Record<string, unknown>);
+}
 
-  const food: Food = {
-    id: Number(row.id),
-    name: String(row.name),
-    brand:
-      row.brand === null || row.brand === undefined ? null : String(row.brand),
-    servingLabel: String(row.serving_label),
-    caloriesPerServing: Number(row.calories_per_serving),
-    proteinG:
-      row.protein_g === null || row.protein_g === undefined
-        ? null
-        : Number(row.protein_g),
-    carbsG:
-      row.carbs_g === null || row.carbs_g === undefined
-        ? null
-        : Number(row.carbs_g),
-    fatG:
-      row.fat_g === null || row.fat_g === undefined ? null : Number(row.fat_g),
-    archived: Number(row.archived) !== 0,
-    createdBy:
-      row.created_by === null || row.created_by === undefined
-        ? null
-        : Number(row.created_by),
-    createdAt: String(row.created_at),
-  };
-
+export async function createFood(input: unknown): Promise<Food> {
+  const data = parseOrThrow(createFoodSchema, input, 'createFood');
+  const food = await insertFoodRow(data);
   revalidateFoodPaths();
   return food;
 }
@@ -319,39 +428,14 @@ export async function updateFood(input: unknown): Promise<Food> {
   }
 
   const result = await db.execute({
-    sql: `SELECT id, name, brand, serving_label, calories_per_serving,
-                 protein_g, carbs_g, fat_g, archived, created_by, created_at
+    sql: `SELECT ${FOOD_RETURNING}
             FROM foods WHERE id = ? LIMIT 1`,
     args: [data.id],
   });
   const row = result.rows[0];
   if (!row) throw new Error(`updateFood: food id=${data.id} not found`);
 
-  const food: Food = {
-    id: Number(row.id),
-    name: String(row.name),
-    brand:
-      row.brand === null || row.brand === undefined ? null : String(row.brand),
-    servingLabel: String(row.serving_label),
-    caloriesPerServing: Number(row.calories_per_serving),
-    proteinG:
-      row.protein_g === null || row.protein_g === undefined
-        ? null
-        : Number(row.protein_g),
-    carbsG:
-      row.carbs_g === null || row.carbs_g === undefined
-        ? null
-        : Number(row.carbs_g),
-    fatG:
-      row.fat_g === null || row.fat_g === undefined ? null : Number(row.fat_g),
-    archived: Number(row.archived) !== 0,
-    createdBy:
-      row.created_by === null || row.created_by === undefined
-        ? null
-        : Number(row.created_by),
-    createdAt: String(row.created_at),
-  };
-
+  const food = rowToFoodLocal(row as unknown as Record<string, unknown>);
   revalidateFoodPaths();
   return food;
 }
@@ -461,6 +545,123 @@ export async function removeMealItem(id: number): Promise<void> {
     const name = await userNameById(Number(row.user_id));
     revalidateMealPaths(name);
   }
+}
+
+// ---------- food favorites ----------
+
+const foodFavoriteSchema = z.object({
+  userId: z.number().int().positive(),
+  foodId: z.number().int().positive(),
+});
+
+export async function addFoodFavorite(input: unknown): Promise<void> {
+  const data = parseOrThrow(foodFavoriteSchema, input, 'addFoodFavorite');
+  const db = getDb();
+  // INSERT OR IGNORE: the (user_id, food_id) primary key makes this idempotent.
+  await db.execute({
+    sql: `INSERT OR IGNORE INTO food_favorites (user_id, food_id) VALUES (?, ?)`,
+    args: [data.userId, data.foodId],
+  });
+  const name = await userNameById(data.userId);
+  revalidatePath(`/${name}/today`);
+  revalidatePath(`/${name}/foods`);
+}
+
+export async function removeFoodFavorite(input: unknown): Promise<void> {
+  const data = parseOrThrow(foodFavoriteSchema, input, 'removeFoodFavorite');
+  const db = getDb();
+  await db.execute({
+    sql: `DELETE FROM food_favorites WHERE user_id = ? AND food_id = ?`,
+    args: [data.userId, data.foodId],
+  });
+  const name = await userNameById(data.userId);
+  revalidatePath(`/${name}/today`);
+  revalidatePath(`/${name}/foods`);
+}
+
+// ---------- createFoodAndAddMealItem ----------
+
+const createFoodAndAddMealItemSchema = createFoodSchema.extend({
+  userId: z.number().int().positive(),
+  date: dateString,
+  servings: z.number().positive().default(1),
+});
+
+export async function createFoodAndAddMealItem(
+  input: unknown,
+): Promise<MealItemWithFood> {
+  const data = parseOrThrow(
+    createFoodAndAddMealItemSchema,
+    input,
+    'createFoodAndAddMealItem',
+  );
+
+  // Pull just the food fields (drop userId/date/servings) so we can reuse
+  // insertFoodRow. createdBy defaults to the logging user if not provided.
+  const { userId, date, servings, ...foodOnly } = data;
+  const foodData = {
+    ...foodOnly,
+    createdBy: foodOnly.createdBy ?? userId,
+  } as CreateFoodParsed;
+
+  const food = await insertFoodRow(foodData);
+
+  const db = getDb();
+  const result = await db.execute({
+    sql: `INSERT INTO meal_items (user_id, date, food_id, servings)
+          VALUES (?, ?, ?, ?)
+          RETURNING id`,
+    args: [userId, date, food.id, servings],
+  });
+  const row = result.rows[0];
+  if (!row) throw new Error('createFoodAndAddMealItem: meal insert failed');
+  const meal = await getMealItemWithFoodById(Number(row.id));
+
+  revalidateFoodPaths();
+  const name = await userNameById(userId);
+  revalidateMealPaths(name);
+  return meal;
+}
+
+// ---------- lookupBarcodeAction ----------
+
+export type BarcodeLookupResult =
+  | { status: 'db_hit'; food: Food }
+  | { status: 'api_hit'; prefill: NutritionLookupResult }
+  | { status: 'not_found' };
+
+const lookupBarcodeSchema = z.object({
+  barcode: z
+    .string()
+    .trim()
+    .min(6, { message: 'barcode is too short' })
+    .max(32, { message: 'barcode is too long' }),
+  userId: z.number().int().positive(),
+});
+
+export async function lookupBarcodeAction(
+  barcode: string,
+  userId: number,
+): Promise<BarcodeLookupResult> {
+  const data = parseOrThrow(
+    lookupBarcodeSchema,
+    { barcode, userId },
+    'lookupBarcodeAction',
+  );
+  // userId isn't used for the DB lookup (foods are shared) but we keep it in
+  // the signature so future logic (e.g. "only my own foods") can use it
+  // without changing callers.
+  void data.userId;
+
+  // 1. Cache hit on the foods table → no API call.
+  const cached = await findFoodByBarcode(data.barcode);
+  if (cached) return { status: 'db_hit', food: cached };
+
+  // 2. OFF → FatSecret.
+  const prefill = await lookupBarcode(data.barcode);
+  if (prefill) return { status: 'api_hit', prefill };
+
+  return { status: 'not_found' };
 }
 
 async function refreshPerformanceSnapshot(

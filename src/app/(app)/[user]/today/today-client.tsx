@@ -19,9 +19,11 @@ import WalksSection from '@/components/WalksSection';
 import WorkoutSection from '@/components/WorkoutSection';
 import type { FoodFormInput } from '@/components/FoodForm';
 import {
+  addFoodFavorite,
   addMealItem,
   createFood,
   logWalk,
+  removeFoodFavorite,
   removeMealItem,
   removeWalkLog,
   tickRoutineExercise,
@@ -38,6 +40,7 @@ export interface TodayClientProps {
   meals: MealItemWithFood[];
   foods: Food[];
   recentFoods: Food[];
+  favorites: Food[];
   dailyCalorieTarget: number | null;
   initialWeightLb: number | null;
   initialSteps: number | null;
@@ -57,6 +60,7 @@ export default function TodayClient({
   meals,
   foods,
   recentFoods,
+  favorites,
   dailyCalorieTarget,
   initialWeightLb,
   initialSteps,
@@ -95,6 +99,22 @@ export default function TodayClient({
   async function handleCreateAndAdd(input: FoodFormInput) {
     const food = await createFood({ ...input, createdBy: userId });
     await addMealItem({ userId, date, foodId: food.id, servings: 1 });
+    refresh();
+  }
+
+  const favoriteIdSet = new Set(favorites.map((f) => f.id));
+
+  async function handleToggleFavorite(foodId: number) {
+    if (favoriteIdSet.has(foodId)) {
+      await removeFoodFavorite({ userId, foodId });
+    } else {
+      await addFoodFavorite({ userId, foodId });
+    }
+    refresh();
+  }
+
+  async function handleQuickAdd(foodId: number) {
+    await addMealItem({ userId, date, foodId, servings: 1 });
     refresh();
   }
 
@@ -182,8 +202,12 @@ export default function TodayClient({
       <FoodPicker
         foods={foods}
         recentFoods={recentFoods}
+        favorites={favorites}
         onAdd={handleAddMeal}
         onCreateAndAdd={handleCreateAndAdd}
+        onToggleFavorite={handleToggleFavorite}
+        onQuickAdd={handleQuickAdd}
+        userSegment={userSegment}
       />
     </div>
   );

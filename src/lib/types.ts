@@ -38,6 +38,10 @@ export interface Entry {
   notes: string | null;
 }
 
+export type NutriScore = 'a' | 'b' | 'c' | 'd' | 'e';
+export type NovaGroup = 1 | 2 | 3 | 4;
+export type FoodDataSource = 'openfoodfacts' | 'fatsecret' | 'manual';
+
 export interface Food {
   id: number;
   name: string;
@@ -50,6 +54,28 @@ export interface Food {
   archived: boolean;
   createdBy: number | null;
   createdAt: string;
+  /** EAN/UPC/etc. barcode if the food was scanned. */
+  barcode: string | null;
+  fiberG: number | null;
+  sugarG: number | null;
+  satFatG: number | null;
+  /** Salt in grams per serving. If only sodium was given, this is sodium × 2.5. */
+  saltG: number | null;
+  /** Open Food Facts Nutri-Score 'a'..'e'. OFF only. */
+  nutriscore: NutriScore | null;
+  /** Open Food Facts NOVA ultra-processing group 1..4. OFF only. */
+  novaGroup: NovaGroup | null;
+  /** Tri-state: true / false / null (unknown). OFF ingredients_analysis. */
+  isVegan: boolean | null;
+  isVegetarian: boolean | null;
+  /** Product photo URL (typically from OFF). */
+  imageUrl: string | null;
+  /** Free-form ingredients text. */
+  ingredients: string | null;
+  /** Where the row came from — null for legacy rows, 'manual' for form entry. */
+  dataSource: FoodDataSource | null;
+  /** Verbatim API response, kept for future diet-quality analysis. */
+  rawNutritionJson: string | null;
 }
 
 export interface MealItem {

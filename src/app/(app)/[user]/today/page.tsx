@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import type { UserName } from '@/lib/types';
 import {
   getEntries,
+  getFavoriteFoods,
   getLatestWeightLb,
   getMealsForDate,
   getProfile,
@@ -47,6 +48,7 @@ export default async function TodayPage({
     meals,
     foods,
     recentFoods,
+    favorites,
     entries,
     todayRoutine,
     streak,
@@ -58,6 +60,7 @@ export default async function TodayPage({
     getMealsForDate(profile.id, date),
     listFoods({ includeArchived: false }),
     getRecentlyUsedFoods(profile.id, 8),
+    getFavoriteFoods(profile.id),
     getEntries(profile.id, date),
     getTodayRoutineRows(profile.id, date),
     getStreak(profile.id, date),
@@ -87,6 +90,7 @@ export default async function TodayPage({
         meals={meals}
         foods={foods}
         recentFoods={recentFoods}
+        favorites={favorites}
         dailyCalorieTarget={profile.dailyCalorieTarget}
         initialWeightLb={todaysEntry?.weightLb ?? null}
         initialSteps={todaysEntry?.steps ?? null}
