@@ -35,10 +35,26 @@ export interface WeightChartProps {
     | 'past'
     | 'already-there'
     | null;
+  /**
+   * Constant-rate "what-if" trajectories (e.g. 1 / 1.5 / 2 lb/wk), anchored at
+   * the current smoothed weight. `isClosest` marks the one nearest the user's
+   * recent 4-week pace — it's drawn emphasized; the others sit back.
+   */
+  scenarios:
+    | {
+        lbPerWeek: number;
+        points: { date: string; weightLb: number }[];
+        isClosest: boolean;
+      }[]
+    | null;
   targetMinLb: number | null;
   targetMaxLb: number | null;
   heightIn: number | null;
   todayIso: string;
+  /** Far edge of the projection window — keeps the x-axis (and target band)
+   *  extended to the end of the year / a year from start even if every line
+   *  reaches target sooner. */
+  horizonEndIso: string;
   mode: GoalMode;
 }
 
@@ -74,7 +90,19 @@ interface ChartRow {
   projection?: number;
   plan?: number;
   required?: number;
+  /** Scenario values keyed `scenario0`, `scenario1`, … */
+  [scenarioKey: string]: number | string | undefined;
 }
+
+/** Stable dataKey for the nth scenario line. */
+function scenarioKey(i: number): string {
+  return `scenario${i}`;
+}
+
+// Fuchsia family for the "what-if" pace scenarios — a distinct hue from the
+// emerald MA, sky plan, amber trend and violet required lines. Slower → faster
+// reads light → dark. We cycle if there are ever more than three.
+const SCENARIO_COLORS = ['#f0abfc', '#e879f9', '#c026d3'];
 
 function buildChartData(props: WeightChartProps): ChartRow[] {
   const dates = new Set<string>();
@@ -85,7 +113,11 @@ function buildChartData(props: WeightChartProps): ChartRow[] {
   if (props.planProjection)
     for (const p of props.planProjection) dates.add(p.date);
   if (props.requiredLine) for (const p of props.requiredLine) dates.add(p.date);
+  if (props.scenarios)
+    for (const s of props.scenarios) for (const p of s.points) dates.add(p.date);
   dates.add(props.todayIso);
+  // Anchor the far edge so the timeline always runs to the horizon.
+  dates.add(props.horizonEndIso);
 
   const sorted = Array.from(dates).sort();
 
@@ -103,6 +135,9 @@ function buildChartData(props: WeightChartProps): ChartRow[] {
   const reqMap = props.requiredLine
     ? new Map(props.requiredLine.map((p) => [p.date, p.weightLb]))
     : null;
+  const scenarioMaps = (props.scenarios ?? []).map(
+    (s) => new Map(s.points.map((p) => [p.date, p.weightLb])),
+  );
 
   return sorted.map((date) => {
     const row: ChartRow = { date };
@@ -124,6 +159,10 @@ function buildChartData(props: WeightChartProps): ChartRow[] {
       const p = reqMap.get(date);
       if (p !== undefined) row.required = p;
     }
+    scenarioMaps.forEach((map, i) => {
+      const p = map.get(date);
+      if (p !== undefined) row[scenarioKey(i)] = p;
+    });
     return row;
   });
 }
@@ -131,12 +170,9 @@ function buildChartData(props: WeightChartProps): ChartRow[] {
 function computeYDomain(data: ChartRow[], targetMin: number | null, targetMax: number | null): [number, number] | undefined {
   const values: number[] = [];
   for (const row of data) {
-    if (row.raw !== undefined) values.push(row.raw);
-    if (row.ma !== undefined) values.push(row.ma);
-    if (row.healthy !== undefined) values.push(row.healthy);
-    if (row.projection !== undefined) values.push(row.projection);
-    if (row.plan !== undefined) values.push(row.plan);
-    if (row.required !== undefined) values.push(row.required);
+    for (const [key, v] of Object.entries(row)) {
+      if (key !== 'date' && typeof v === 'number') values.push(v);
+    }
   }
   if (targetMin !== null) values.push(targetMin);
   if (targetMax !== null) values.push(targetMax);
@@ -390,6 +426,26 @@ export default function WeightChart(props: WeightChartProps) {
                 connectNulls
               />
             ) : null}
+            {props.scenarios?.map((s, i) => {
+              const color = SCENARIO_COLORS[i % SCENARIO_COLORS.length];
+              return (
+                <Line
+                  key={`scenario-${i}`}
+                  type="linear"
+                  dataKey={scenarioKey(i)}
+                  name={`${s.lbPerWeek.toFixed(1)} lb/wk${
+                    s.isClosest ? ' (closest)' : ''
+                  }`}
+                  stroke={color}
+                  strokeWidth={s.isClosest ? 2.5 : 1.25}
+                  strokeOpacity={s.isClosest ? 1 : 0.5}
+                  strokeDasharray={s.isClosest ? '5 3' : '1 4'}
+                  dot={false}
+                  isAnimationActive={false}
+                  connectNulls
+                />
+              );
+            })}
             <Scatter
               dataKey="raw"
               name="Logged weight"

@@ -9,20 +9,43 @@ import {
 } from '@/server/queries';
 import {
   caloriePaceProjection,
+  closestScenarioRate,
   currentSmoothedWeight,
   healthyTrendLine,
   movingAverage,
+  paceScenarioProjection,
   projectWeight,
   requiredPace,
+  scenarioRatesForMode,
+  weeklyAverageLoss,
   type DatedWeight,
 } from '@/lib/stats';
 import StatsPanel from '@/components/StatsPanel';
 import WeightChart from '@/components/WeightChart';
+import PaceInsight from '@/components/PaceInsight';
 import RecentPrs from '@/components/RecentPrs';
-import { todayIso } from '@/lib/dateUtils';
+import { addDays, daysBetween, todayIso } from '@/lib/dateUtils';
 import { ACTIVITY_LEVELS, bmrMifflinStJeor, tdee } from '@/lib/units';
 
 const VALID_USERS: readonly UserName[] = ['adam', 'anna', 'demo'];
+
+/**
+ * Far edge of the projection window: run the chart out to the later of the end
+ * of the current year and one year from the start date. This keeps the target
+ * band and the what-if scenario lines visible across the whole horizon even
+ * when a faster pace reaches the band much sooner.
+ */
+function projectionHorizonEnd(today: string, startDate: string | null): string {
+  const year = Number(today.slice(0, 4));
+  let end = `${year}-12-31`;
+  if (startDate) {
+    const oneYearFromStart = addDays(startDate, 365);
+    if (oneYearFromStart > end) end = oneYearFromStart;
+  }
+  // Never project a horizon that's already behind us (e.g. logging on Dec 31).
+  if (end <= today) end = addDays(today, 90);
+  return end;
+}
 
 export default async function DashboardPage({
   params,
@@ -153,6 +176,66 @@ export default async function DashboardPage({
         ]
       : null;
 
+  // --- What-if pace scenarios + realism check ----------------------------
+  // Project constant-rate trajectories (1 / 1.5 / 2 lb/wk for loss) from the
+  // current smoothed weight, and compare them to the user's actual recent
+  // pace so we can say which one they're tracking — a more honest read on the
+  // target than the target date alone.
+  const horizonEndIso = projectionHorizonEnd(today, profile.startDate);
+  const horizonDays = Math.max(7, daysBetween(today, horizonEndIso));
+
+  // Pace over three windows (lb/wk toward the goal; positive = progress).
+  // weeklyAverageLoss is loss-positive, so flip the sign in build mode.
+  const towardGoal = (lossPositive: number) =>
+    mode === 'build' ? -lossPositive : lossPositive;
+  const pace2wk = ma.length >= 2 ? towardGoal(weeklyAverageLoss(ma, 2)) : null;
+  const pace4wk = ma.length >= 2 ? towardGoal(weeklyAverageLoss(ma, 4)) : null;
+  const lastMaDate = ma.length > 0 ? ma[ma.length - 1].date : null;
+  const paceSinceStart =
+    profile.startDate != null &&
+    profile.startWeightLb != null &&
+    anchorWeight != null &&
+    lastMaDate != null &&
+    daysBetween(profile.startDate, lastMaDate) > 0
+      ? (towardGoal(profile.startWeightLb - anchorWeight) /
+          daysBetween(profile.startDate, lastMaDate)) *
+        7
+      : null;
+
+  const scenarioRates = scenarioRatesForMode(mode);
+  const closestRate =
+    pace4wk != null ? closestScenarioRate(pace4wk, scenarioRates) : null;
+
+  const scenarioProjections =
+    targetBoundaryLb != null && anchorWeight != null
+      ? scenarioRates.map((rate) => ({
+          rate,
+          proj: paceScenarioProjection({
+            anchorDate: today,
+            anchorWeightLb: anchorWeight,
+            lbPerWeek: rate,
+            targetMaxLb: targetBoundaryLb,
+            horizonDays,
+            mode,
+          }),
+        }))
+      : [];
+
+  const chartScenarios = scenarioProjections
+    .filter((s) => s.proj !== null)
+    .map((s) => ({
+      lbPerWeek: s.rate,
+      points: s.proj!.projection,
+      isClosest: s.rate === closestRate,
+    }));
+
+  const insightScenarios = scenarioProjections
+    .filter((s) => s.proj !== null)
+    .map((s) => ({
+      lbPerWeek: s.rate,
+      targetReached: s.proj!.targetReached,
+    }));
+
   return (
     <div className="space-y-5">
       <header className="flex items-end justify-between">
@@ -185,12 +268,26 @@ export default async function DashboardPage({
         planProjection={planProjection?.projection ?? null}
         requiredLine={requiredLine}
         requiredPaceClass={requiredPaceResult?.pace ?? null}
+        scenarios={chartScenarios.length > 0 ? chartScenarios : null}
         targetMinLb={profile.targetWeightMinLb}
         targetMaxLb={profile.targetWeightMaxLb}
         heightIn={profile.heightIn}
         todayIso={today}
+        horizonEndIso={horizonEndIso}
         mode={mode}
       />
+
+      {insightScenarios.length > 0 ? (
+        <PaceInsight
+          mode={mode}
+          pace2wk={pace2wk}
+          pace4wk={pace4wk}
+          paceSinceStart={paceSinceStart}
+          closestRate={closestRate}
+          scenarios={insightScenarios}
+          targetDate={profile.targetDate}
+        />
+      ) : null}
 
       {mode === 'build' ? (
         <RecentPrs prs={recentPrs} />

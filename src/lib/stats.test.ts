@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   caloriePaceProjection,
+  closestScenarioRate,
   currentSmoothedWeight,
   daysToTarget,
   healthyLossLine,
   linearRegression,
   movingAverage,
+  paceScenarioProjection,
   projectWeight,
   requiredPace,
+  scenarioRatesForMode,
   totalChangeSinceStart,
   weeklyAverageLoss,
   type DatedWeight,
@@ -362,6 +365,115 @@ describe('caloriePaceProjection', () => {
     expect(result).not.toBeNull();
     expect(result!.targetReached).toBe('2026-04-29');
     expect(result!.projection).toHaveLength(1);
+  });
+});
+
+describe('scenarioRatesForMode', () => {
+  it('uses 1/1.5/2 lb/wk for loss', () => {
+    expect(scenarioRatesForMode('loss')).toEqual([1, 1.5, 2]);
+  });
+  it('uses gentler lean-gain rates for build', () => {
+    expect(scenarioRatesForMode('build')).toEqual([0.25, 0.5, 1]);
+  });
+});
+
+describe('paceScenarioProjection', () => {
+  it('reaches the target at the rate-implied date and ends exactly on target', () => {
+    // 200 → 180 (lose 20 lb) at 2 lb/wk = 10 weeks = 70 days.
+    const r = paceScenarioProjection({
+      anchorDate: '2026-01-01',
+      anchorWeightLb: 200,
+      lbPerWeek: 2,
+      targetMaxLb: 180,
+    });
+    expect(r).not.toBeNull();
+    expect(r!.lbPerWeek).toBe(2);
+    expect(r!.targetReached).toBe('2026-03-12'); // 2026-01-01 + 70 days
+    const last = r!.projection[r!.projection.length - 1];
+    expect(last.weightLb).toBeCloseTo(180, 6);
+    expect(last.date).toBe(r!.targetReached);
+  });
+
+  it('a slower rate reaches the target later', () => {
+    const slow = paceScenarioProjection({
+      anchorDate: '2026-01-01',
+      anchorWeightLb: 200,
+      lbPerWeek: 1,
+      targetMaxLb: 180,
+    });
+    const fast = paceScenarioProjection({
+      anchorDate: '2026-01-01',
+      anchorWeightLb: 200,
+      lbPerWeek: 2,
+      targetMaxLb: 180,
+    });
+    expect(slow!.targetReached! > fast!.targetReached!).toBe(true);
+  });
+
+  it('runs to the horizon with null targetReached when the band is too far', () => {
+    const r = paceScenarioProjection({
+      anchorDate: '2026-01-01',
+      anchorWeightLb: 200,
+      lbPerWeek: 1,
+      targetMaxLb: 180,
+      horizonDays: 28, // only 4 weeks → 4 lb lost, nowhere near 180
+    });
+    expect(r!.targetReached).toBeNull();
+    expect(r!.projection.length).toBeGreaterThan(1);
+    const last = r!.projection[r!.projection.length - 1];
+    expect(last.weightLb).toBeCloseTo(196, 6); // 200 - 4
+  });
+
+  it('build mode gains toward the floor', () => {
+    const r = paceScenarioProjection({
+      anchorDate: '2026-01-01',
+      anchorWeightLb: 150,
+      lbPerWeek: 1,
+      targetMaxLb: 160, // floor to climb to
+      mode: 'build',
+    });
+    expect(r!.targetReached).toBe('2026-03-12'); // 10 wk = 70 days
+    const last = r!.projection[r!.projection.length - 1];
+    expect(last.weightLb).toBeCloseTo(160, 6);
+  });
+
+  it('returns a single anchor point when already past the target', () => {
+    const r = paceScenarioProjection({
+      anchorDate: '2026-01-01',
+      anchorWeightLb: 178,
+      lbPerWeek: 1.5,
+      targetMaxLb: 180,
+    });
+    expect(r!.targetReached).toBe('2026-01-01');
+    expect(r!.projection).toHaveLength(1);
+  });
+
+  it('rejects invalid input', () => {
+    expect(
+      paceScenarioProjection({
+        anchorDate: '2026-01-01',
+        anchorWeightLb: 200,
+        lbPerWeek: 0,
+        targetMaxLb: 180,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('closestScenarioRate', () => {
+  it('picks the nearest rate', () => {
+    expect(closestScenarioRate(1.3, [1, 1.5, 2])).toBe(1.5);
+    expect(closestScenarioRate(0.9, [1, 1.5, 2])).toBe(1);
+    expect(closestScenarioRate(1.9, [1, 1.5, 2])).toBe(2);
+  });
+
+  it('returns null when not progressing', () => {
+    expect(closestScenarioRate(0, [1, 1.5, 2])).toBeNull();
+    expect(closestScenarioRate(-0.5, [1, 1.5, 2])).toBeNull();
+  });
+
+  it('breaks ties toward the slower rate', () => {
+    expect(closestScenarioRate(1.25, [1, 1.5, 2])).toBe(1);
   });
 });
 

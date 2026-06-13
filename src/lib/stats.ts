@@ -590,6 +590,123 @@ export function requiredPace(args: RequiredPaceInput): RequiredPace | null {
   };
 }
 
+// ---------- 11b. constant-rate pace scenarios ---------------------------
+
+export interface PaceScenario {
+  /** Magnitude of the modeled rate, lb/week (always positive). */
+  lbPerWeek: number;
+  /** Weekly points from the anchor to the target boundary (or horizon end). */
+  projection: DatedWeight[];
+  /** Date the boundary is reached, or null if not reached within the horizon. */
+  targetReached: string | null;
+}
+
+/**
+ * The set of "what-if" weekly rates we plot as alternative trajectories.
+ *   loss:  1 / 1.5 / 2 lb/week  (2 lb/wk is the NHS upper safe limit)
+ *   build: 0.25 / 0.5 / 1 lb/week (lean-gain rates; >1 is mostly fat)
+ */
+export function scenarioRatesForMode(mode: GoalMode): number[] {
+  return mode === 'build' ? [0.25, 0.5, 1] : [1, 1.5, 2];
+}
+
+/**
+ * Project a straight line forward from the anchor at a *fixed* weekly rate
+ * (lb/week magnitude), independent of calories. Used to plot the
+ * "if you lost 1 / 1.5 / 2 lb a week" alternatives.
+ *
+ * The line stops at the target boundary (its final point is exactly the
+ * boundary on the interpolated crossing date) so the endpoint marks the
+ * projected goal date. If the boundary isn't reached within `horizonDays`
+ * the line runs to the horizon and `targetReached` is null. Returns null
+ * for invalid inputs; if the anchor is already on the target side, returns
+ * a single anchor point with `targetReached = anchorDate`.
+ */
+export function paceScenarioProjection(args: {
+  anchorDate: string;
+  anchorWeightLb: number;
+  /** Magnitude of the weekly rate; must be > 0. */
+  lbPerWeek: number;
+  targetMaxLb: number;
+  horizonDays?: number;
+  mode?: GoalMode;
+}): PaceScenario | null {
+  const {
+    anchorDate,
+    anchorWeightLb,
+    lbPerWeek,
+    targetMaxLb,
+    horizonDays = 365,
+    mode = 'loss',
+  } = args;
+  if (
+    !Number.isFinite(anchorWeightLb) ||
+    !Number.isFinite(lbPerWeek) ||
+    !Number.isFinite(targetMaxLb) ||
+    anchorWeightLb <= 0 ||
+    lbPerWeek <= 0 ||
+    targetMaxLb <= 0
+  ) {
+    return null;
+  }
+
+  const slopeLbPerDay = (mode === 'loss' ? -lbPerWeek : lbPerWeek) / 7;
+
+  const alreadyThere =
+    mode === 'loss'
+      ? anchorWeightLb <= targetMaxLb
+      : anchorWeightLb >= targetMaxLb;
+  if (alreadyThere) {
+    return {
+      lbPerWeek,
+      projection: [{ date: anchorDate, weightLb: anchorWeightLb }],
+      targetReached: anchorDate,
+    };
+  }
+
+  const points: DatedWeight[] = [
+    { date: anchorDate, weightLb: anchorWeightLb },
+  ];
+  let targetReached: string | null = null;
+  for (let d = 7; d <= horizonDays; d += 7) {
+    const w = anchorWeightLb + slopeLbPerDay * d;
+    const crossed =
+      mode === 'loss' ? w <= targetMaxLb : w >= targetMaxLb;
+    if (crossed) {
+      const crossingDays = (targetMaxLb - anchorWeightLb) / slopeLbPerDay;
+      targetReached = addDays(anchorDate, Math.ceil(crossingDays));
+      points.push({ date: targetReached, weightLb: targetMaxLb });
+      break;
+    }
+    points.push({ date: addDays(anchorDate, d), weightLb: w });
+  }
+  return { lbPerWeek, projection: points, targetReached };
+}
+
+/**
+ * Pick the scenario rate whose weekly pace is closest to the user's recent
+ * pace. `recentLbPerWeek` is the progress magnitude (positive = moving toward
+ * the goal). Returns null when there's no meaningful progress (≤ 0) — nothing
+ * to compare against. Ties resolve to the slower (first-listed) rate.
+ */
+export function closestScenarioRate(
+  recentLbPerWeek: number,
+  rates: number[],
+): number | null {
+  if (!Number.isFinite(recentLbPerWeek) || recentLbPerWeek <= 0) return null;
+  if (rates.length === 0) return null;
+  let best = rates[0];
+  let bestDiff = Math.abs(rates[0] - recentLbPerWeek);
+  for (const r of rates.slice(1)) {
+    const diff = Math.abs(r - recentLbPerWeek);
+    if (diff < bestDiff) {
+      best = r;
+      bestDiff = diff;
+    }
+  }
+  return best;
+}
+
 // ---------- 11. estimated 1-rep-max (Epley) -----------------------------
 
 /**
