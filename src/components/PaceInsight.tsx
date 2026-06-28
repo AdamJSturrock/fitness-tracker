@@ -17,8 +17,10 @@ export interface PaceInsightProps {
   closestRate: number | null;
   /** One entry per plotted scenario (e.g. 1 / 1.5 / 2 lb/wk), ascending by rate. */
   scenarios: PaceScenarioEta[];
-  /** User's goal date for being inside the band, if set. */
+  /** User's goal date for reaching the maintain weight, if set. */
   targetDate: string | null;
+  /** Exact maintain weight the scenarios are projected toward. */
+  targetExactLb: number | null;
 }
 
 function formatDateLong(iso: string): string {
@@ -52,9 +54,13 @@ export default function PaceInsight({
   closestRate,
   scenarios,
   targetDate,
+  targetExactLb,
 }: PaceInsightProps) {
   const isBuild = mode === 'build';
   const verb = isBuild ? 'gain' : 'loss';
+  // How we name the destination in copy: the exact maintain weight when known.
+  const goalPhrase =
+    targetExactLb !== null ? `${Math.round(targetExactLb)} lb` : 'the target band';
 
   // Is the recent pace decelerating? (2-wk slower than 4-wk slower than start.)
   const slowing =
@@ -87,14 +93,14 @@ export default function PaceInsight({
     verdict = {
       text: `At your recent ${verb} pace (~${closestRate.toFixed(
         1,
-      )} lb/wk) you don't reach the target band within the year shown.`,
+      )} lb/wk) you don't reach ${goalPhrase} within the year shown.`,
       tone: 'bad',
     };
   } else if (targetDate === null) {
     verdict = {
       text: `At your recent ${verb} pace (~${closestRate.toFixed(
         1,
-      )} lb/wk) you'd reach the target band around ${formatDateLong(
+      )} lb/wk) you'd reach ${goalPhrase} around ${formatDateLong(
         closest.targetReached,
       )}. Set a target date on Profile to see whether that's on track.`,
       tone: 'good',
@@ -105,7 +111,7 @@ export default function PaceInsight({
       verdict = {
         text: `On track — your recent ${verb} pace (~${closestRate.toFixed(
           1,
-        )} lb/wk) reaches the band around ${formatDateLong(
+        )} lb/wk) reaches ${goalPhrase} around ${formatDateLong(
           closest.targetReached,
         )}, on or ahead of your ${formatDateLong(targetDate)} goal.`,
         tone: 'good',
@@ -120,7 +126,7 @@ export default function PaceInsight({
       verdict = {
         text: `At your recent ${verb} pace (~${closestRate.toFixed(
           1,
-        )} lb/wk) you'd reach the band around ${formatDateLong(
+        )} lb/wk) you'd reach ${goalPhrase} around ${formatDateLong(
           closest.targetReached,
         )} — about ${weeksLate} week${
           weeksLate === 1 ? '' : 's'
@@ -167,7 +173,7 @@ export default function PaceInsight({
 
       <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-2.5">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-          Projected target date by {verb} pace
+          Arrival at {goalPhrase} by {verb} pace
         </p>
         <ul className="mt-1.5 space-y-1">
           {scenarios.map((s) => (

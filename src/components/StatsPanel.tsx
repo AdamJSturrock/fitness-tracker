@@ -25,6 +25,8 @@ export interface StatsPanelProps {
   tdeeKcal: number | null;
   /** Required pace to hit the user's target_date — null if no targetDate set. */
   requiredPace: RequiredPace | null;
+  /** Exact "maintain" weight — dead centre of the healthy BMI range. */
+  targetExactLb: number | null;
   mode: GoalMode;
 }
 
@@ -89,14 +91,18 @@ export default function StatsPanel({
   avgRecentKcal,
   tdeeKcal,
   requiredPace,
+  targetExactLb,
   mode,
 }: StatsPanelProps) {
   const isBuild = mode === 'build';
-  // The boundary the projection aims at: upper bound for loss, lower bound
-  // (the floor you climb above) for build.
+  // The near edge of the band: upper bound for loss, lower bound (the floor
+  // you climb above) for build.
   const targetBoundaryLb = isBuild
     ? profile.targetWeightMinLb
     : profile.targetWeightMaxLb;
+  // The weight every projection aims at — the exact maintain weight when we can
+  // compute it, otherwise the band edge.
+  const goalLb = targetExactLb ?? targetBoundaryLb;
   // Build the smoothed series.
   const filtered: DatedWeight[] = entries
     .filter(
@@ -115,14 +121,14 @@ export default function StatsPanel({
       : null;
   const wkly = weeklyAverageLoss(ma);
 
-  // Projection: only when we have a target boundary + ≥7 distinct points.
+  // Projection: only when we have a goal weight + ≥7 distinct points.
   const projection =
-    targetBoundaryLb != null && filtered.length > 0
+    goalLb != null && filtered.length > 0
       ? projectWeight({
           maSeries: ma,
           today:
             ma.length > 0 ? ma[ma.length - 1].date : entries[0]?.date ?? '',
-          targetWeightMaxLb: targetBoundaryLb,
+          targetWeightMaxLb: goalLb,
           mode,
         })
       : null;
@@ -222,6 +228,16 @@ export default function StatsPanel({
           <Sub>—</Sub>
         )}
       </Card>
+
+      {(() => {
+        const maintain = maintainStatus(current, targetExactLb);
+        return (
+          <Card label="Maintain at" tone={maintain.tone}>
+            <Big value={formatWeight(targetExactLb)} />
+            <Sub>{maintain.note}</Sub>
+          </Card>
+        );
+      })()}
 
       <Card
         label="Δ since start"
@@ -459,6 +475,34 @@ function Big({ value }: { value: string }) {
 
 function Sub({ children }: { children: React.ReactNode }) {
   return <p className="mt-0.5 text-xs text-slate-500">{children}</p>;
+}
+
+/**
+ * Guidance for holding the exact maintain weight. `current` and `targetExact`
+ * are both lb (smoothed). A ±0.5 lb dead-band counts as "on target". Above the
+ * target → eat at a slight deficit to drift down; below → ease off / eat a bit
+ * more. This is the "eat more or less to stay close" read-out.
+ */
+function maintainStatus(
+  current: number | null,
+  targetExact: number | null,
+): { note: string; tone: Tone } {
+  if (targetExact == null) return { note: 'Set height to compute', tone: 'neutral' };
+  if (current == null) return { note: 'Log a weight to see this', tone: 'neutral' };
+  const gap = current - targetExact; // +ve = above the maintain weight
+  if (Math.abs(gap) <= 0.5) {
+    return { note: 'On target — hold steady', tone: 'good' };
+  }
+  if (gap > 0) {
+    return {
+      note: `${gap.toFixed(1)} lb above — stay in a slight deficit`,
+      tone: 'primary',
+    };
+  }
+  return {
+    note: `${Math.abs(gap).toFixed(1)} lb under — ease off the deficit`,
+    tone: 'neutral',
+  };
 }
 
 type Remaining =

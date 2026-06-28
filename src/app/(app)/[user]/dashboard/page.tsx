@@ -25,7 +25,12 @@ import WeightChart from '@/components/WeightChart';
 import PaceInsight from '@/components/PaceInsight';
 import RecentPrs from '@/components/RecentPrs';
 import { addDays, daysBetween, todayIso } from '@/lib/dateUtils';
-import { ACTIVITY_LEVELS, bmrMifflinStJeor, tdee } from '@/lib/units';
+import {
+  ACTIVITY_LEVELS,
+  bmrMifflinStJeor,
+  healthyWeightRangeLb,
+  tdee,
+} from '@/lib/units';
 
 const VALID_USERS: readonly UserName[] = ['adam', 'anna', 'demo'];
 
@@ -65,10 +70,26 @@ export default async function DashboardPage({
     getRecentPrs(profile.id, 30, 5),
   ]);
   const mode = profile.mode;
-  // The boundary the projection aims at: upper bound for loss, lower bound
-  // (the floor you climb above) for build.
+  // The near edge of the band — upper bound for loss, lower bound (the floor
+  // you climb above) for build. This is the *first* target: where you enter
+  // the band.
   const targetBoundaryLb =
     mode === 'build' ? profile.targetWeightMinLb : profile.targetWeightMaxLb;
+
+  // The exact "maintain" weight: dead centre of the healthy BMI range
+  // (BMI 21.75). This is the second target — the weight to settle at and hold,
+  // past the near edge of the band. Falls back to the centre of the configured
+  // target band when height isn't set. Every forward projection aims here, so
+  // the lines keep descending past the band edge down to this weight.
+  const healthyRange = healthyWeightRangeLb(profile.heightIn);
+  const bandMidLb =
+    profile.targetWeightMinLb != null && profile.targetWeightMaxLb != null
+      ? (profile.targetWeightMinLb + profile.targetWeightMaxLb) / 2
+      : null;
+  const targetExactLb = healthyRange
+    ? (healthyRange.minLb + healthyRange.maxLb) / 2
+    : bandMidLb;
+  const goalLb = targetExactLb ?? targetBoundaryLb;
 
   const todaysCalories = meals.reduce(
     (sum, m) => sum + Math.round(m.food.caloriesPerServing * m.servings),
@@ -98,11 +119,11 @@ export default async function DashboardPage({
       : [];
 
   const projectionResult =
-    targetBoundaryLb != null && ma.length > 0
+    goalLb != null && ma.length > 0
       ? projectWeight({
           maSeries: ma,
           today: ma[ma.length - 1].date,
-          targetWeightMaxLb: targetBoundaryLb,
+          targetWeightMaxLb: goalLb,
           mode,
         })
       : null;
@@ -130,7 +151,7 @@ export default async function DashboardPage({
   const dailyKcalAssumed =
     avgRecentKcal ?? profile.dailyCalorieTarget ?? null;
   const planProjection =
-    targetBoundaryLb != null &&
+    goalLb != null &&
     anchorWeight != null &&
     tdeeVal != null &&
     dailyKcalAssumed != null
@@ -139,7 +160,7 @@ export default async function DashboardPage({
           anchorWeightLb: anchorWeight,
           tdeeKcal: tdeeVal,
           dailyKcal: dailyKcalAssumed,
-          targetMaxLb: targetBoundaryLb,
+          targetMaxLb: goalLb,
           mode,
         })
       : null;
@@ -149,30 +170,30 @@ export default async function DashboardPage({
   // do they need to eat / lose per week to make it.
   const requiredPaceResult =
     profile.targetDate != null &&
-    targetBoundaryLb != null &&
+    goalLb != null &&
     anchorWeight != null &&
     tdeeVal != null
       ? requiredPace({
           anchorDate: today,
           anchorWeightLb: anchorWeight,
           targetDate: profile.targetDate,
-          targetMaxLb: targetBoundaryLb,
+          targetMaxLb: goalLb,
           tdeeKcal: tdeeVal,
           mode,
         })
       : null;
   // Build a 2-point "required" line for the chart from (today, current) to
-  // (targetDate, targetBoundaryLb) — only when we have a sensible required pace.
+  // (targetDate, goalLb) — only when we have a sensible required pace.
   const requiredLine =
     requiredPaceResult &&
     requiredPaceResult.pace !== 'past' &&
     requiredPaceResult.pace !== 'already-there' &&
     profile.targetDate != null &&
-    targetBoundaryLb != null &&
+    goalLb != null &&
     anchorWeight != null
       ? [
           { date: today, weightLb: anchorWeight },
-          { date: profile.targetDate, weightLb: targetBoundaryLb },
+          { date: profile.targetDate, weightLb: goalLb },
         ]
       : null;
 
@@ -207,14 +228,14 @@ export default async function DashboardPage({
     pace4wk != null ? closestScenarioRate(pace4wk, scenarioRates) : null;
 
   const scenarioProjections =
-    targetBoundaryLb != null && anchorWeight != null
+    goalLb != null && anchorWeight != null
       ? scenarioRates.map((rate) => ({
           rate,
           proj: paceScenarioProjection({
             anchorDate: today,
             anchorWeightLb: anchorWeight,
             lbPerWeek: rate,
-            targetMaxLb: targetBoundaryLb,
+            targetMaxLb: goalLb,
             horizonDays,
             mode,
           }),
@@ -257,6 +278,7 @@ export default async function DashboardPage({
         avgRecentKcal={avgRecentKcal}
         tdeeKcal={tdeeVal}
         requiredPace={requiredPaceResult}
+        targetExactLb={targetExactLb}
         mode={mode}
       />
 
@@ -271,6 +293,7 @@ export default async function DashboardPage({
         scenarios={chartScenarios.length > 0 ? chartScenarios : null}
         targetMinLb={profile.targetWeightMinLb}
         targetMaxLb={profile.targetWeightMaxLb}
+        targetExactLb={targetExactLb}
         heightIn={profile.heightIn}
         todayIso={today}
         horizonEndIso={horizonEndIso}
@@ -286,6 +309,7 @@ export default async function DashboardPage({
           closestRate={closestRate}
           scenarios={insightScenarios}
           targetDate={profile.targetDate}
+          targetExactLb={targetExactLb}
         />
       ) : null}
 

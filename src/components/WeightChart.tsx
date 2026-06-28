@@ -49,6 +49,9 @@ export interface WeightChartProps {
     | null;
   targetMinLb: number | null;
   targetMaxLb: number | null;
+  /** Exact "maintain" weight — dead centre of the healthy BMI range. Drawn as a
+   *  solid reference line the projection lines descend to. */
+  targetExactLb: number | null;
   heightIn: number | null;
   todayIso: string;
   /** Far edge of the projection window — keeps the x-axis (and target band)
@@ -167,7 +170,12 @@ function buildChartData(props: WeightChartProps): ChartRow[] {
   });
 }
 
-function computeYDomain(data: ChartRow[], targetMin: number | null, targetMax: number | null): [number, number] | undefined {
+function computeYDomain(
+  data: ChartRow[],
+  targetMin: number | null,
+  targetMax: number | null,
+  targetExact: number | null,
+): [number, number] | undefined {
   const values: number[] = [];
   for (const row of data) {
     for (const [key, v] of Object.entries(row)) {
@@ -176,6 +184,7 @@ function computeYDomain(data: ChartRow[], targetMin: number | null, targetMax: n
   }
   if (targetMin !== null) values.push(targetMin);
   if (targetMax !== null) values.push(targetMax);
+  if (targetExact !== null) values.push(targetExact);
   if (values.length === 0) return undefined;
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -231,8 +240,14 @@ export default function WeightChart(props: WeightChartProps) {
   const [showBmi, setShowBmi] = useState(false);
   const data = useMemo(() => buildChartData(props), [props]);
   const yDomain = useMemo(
-    () => computeYDomain(data, props.targetMinLb, props.targetMaxLb),
-    [data, props.targetMinLb, props.targetMaxLb],
+    () =>
+      computeYDomain(
+        data,
+        props.targetMinLb,
+        props.targetMaxLb,
+        props.targetExactLb,
+      ),
+    [data, props.targetMinLb, props.targetMaxLb, props.targetExactLb],
   );
   const bmiBands = useMemo(() => {
     if (!showBmi || !props.heightIn || !yDomain) return null;
@@ -331,6 +346,23 @@ export default function WeightChart(props: WeightChartProps) {
                 label={{
                   value: 'Target',
                   position: 'insideTopRight',
+                  fill: '#047857',
+                  fontSize: 10,
+                  fontWeight: 600,
+                }}
+              />
+            ) : null}
+
+            {props.targetExactLb !== null ? (
+              <ReferenceLine
+                y={props.targetExactLb}
+                stroke="#047857"
+                strokeWidth={1.5}
+                strokeDasharray="6 3"
+                ifOverflow="extendDomain"
+                label={{
+                  value: `Maintain ${Math.round(props.targetExactLb)} lb`,
+                  position: 'insideBottomRight',
                   fill: '#047857',
                   fontSize: 10,
                   fontWeight: 600,
